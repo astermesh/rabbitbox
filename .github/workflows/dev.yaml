@@ -1,0 +1,19 @@
+name: Dev
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths-ignore:
+      - '**/*.md'
+      - 'rnd/**'
+      - 'docs/**'
+      - 'work/**'
+  workflow_dispatch:
+
+jobs:
+  static:
+    uses: ./.github/workflows/_static-checks.yaml
+
+  unit:
+    uses: ./.github/workflows/_unit-tests.yaml
