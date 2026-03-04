@@ -1,0 +1,22 @@
+name: Main
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+      - 'rnd/**'
+      - 'docs/**'
+      - 'work/**'
+  workflow_dispatch:
+
+jobs:
+  static:
+    uses: ./.github/workflows/_static-checks.yaml
+
+  test:
+    needs: static
+    uses: ./.github/workflows/_platform-tests.yaml
+    with:
+      platforms: 'node'

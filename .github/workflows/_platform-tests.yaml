@@ -1,0 +1,95 @@
+name: Platform Tests
+
+on:
+  workflow_call:
+    inputs:
+      type:
+        description: 'Test type to run'
+        required: false
+        type: string
+        default: 'all'
+      platforms:
+        description: 'Platforms to test'
+        required: false
+        type: string
+        default: 'node,deno,bun,browser'
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      test-suffix: ${{ steps.set-test-suffix.outputs.suffix }}
+    steps:
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          PLATFORMS="${{ inputs.platforms || 'node,deno,bun,browser' }}"
+          MATRIX=$(echo "$PLATFORMS" | jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";""))')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+      - name: Set test suffix
+        id: set-test-suffix
+        run: |
+          TEST_TYPE="${{ inputs.type || 'all' }}"
+          if [ "$TEST_TYPE" = "all" ]; then
+            echo "suffix=" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=:$TEST_TYPE" >> $GITHUB_OUTPUT
+          fi
+
+  test:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Deno
+        if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Setup Bun
+        if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get Playwright version
+        if: matrix.runtime == 'browser'
+        run: echo "PLAYWRIGHT_VERSION=$(node -e "console.log(require('./package-lock.json').packages['node_modules/playwright'].version)")" >> $GITHUB_ENV
+
+      - name: Cache Playwright browsers
+        if: matrix.runtime == 'browser'
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+
+      - name: Install Playwright browsers
+        if: matrix.runtime == 'browser' && steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium --with-deps
+
+      - name: Install Playwright OS deps
+        if: matrix.runtime == 'browser' && steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run tests
+        run: npm run test:${{ matrix.runtime }}${{ needs.setup.outputs.test-suffix }}
