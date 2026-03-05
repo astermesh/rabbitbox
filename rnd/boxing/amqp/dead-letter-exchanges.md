@@ -55,13 +55,13 @@ Each dead-letter event adds an entry to the `x-death` header array:
 | Field | Description |
 |---|---|
 | `queue` | Source queue name |
-| `reason` | `rejected`, `expired`, `maxlen`, `delivery_limit` |
+| `reason` | `rejected`, `expired`, `maxlen`, or `delivery_limit` |
 | `count` | Times dead-lettered from this queue for this reason |
 | `exchange` | Original publish exchange |
 | `routing-keys` | Original routing keys |
 | `time` | Timestamp of the event |
 
-Quick-access headers: `x-first-death-queue`, `x-first-death-reason`, `x-last-death-queue`, `x-last-death-reason`.
+Quick-access headers: `x-first-death-queue`, `x-first-death-reason`, `x-first-death-exchange`, `x-last-death-queue`, `x-last-death-reason`, `x-last-death-exchange`.
 
 ## Retry Patterns with DLX
 

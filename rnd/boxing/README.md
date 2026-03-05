@@ -7,6 +7,10 @@ Boxing RabbitMQ (AMQP 0-9-1 message broker) — protocol analysis, Eng design, i
 - [Boxing Analysis](boxing-analysis.md) — AMQP 0-9-1 protocol internals, boxing process, SBI hook types, cross-platform analysis, implementation strategy
 - [Eng Options Survey](eng-options-survey.md) — existing JS/TS libraries, AMQP server implementations, protocol resources
 
+## Readiness Audit
+
+- [Research Gaps](research-gaps.md) — missing prerequisites identified for planning readiness
+
 ## AMQP 0-9-1 Reference
 
 Supplementary protocol reference material.
@@ -17,6 +21,7 @@ Supplementary protocol reference material.
 - [Consumer Acknowledgments and QoS](amqp/acknowledgments-and-qos.md) — ack, nack, reject, prefetch, consumer modes
 - [Publisher Confirms](amqp/publisher-confirms.md) — confirm mode, delivery tags, async confirms, data safety
 - [JS/TS Client Libraries](amqp/js-ts-clients.md) — amqplib, rabbitmq-client, amqp-client.js, cross-platform
+- [State Machines](amqp/state-machines.md) — formal state machines for connection, channel, message, and consumer lifecycles
 - [Connections and Channels](amqp/connections-and-channels.md) — lifecycle, multiplexing, heartbeats, recovery, TLS
 - [Virtual Hosts](amqp/virtual-hosts.md) — multi-tenancy, permissions, limits, default queue types
 - [Dead Letter Exchanges](amqp/dead-letter-exchanges.md) — DLX configuration, triggers, x-death headers

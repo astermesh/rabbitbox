@@ -10,6 +10,7 @@ Supplementary protocol reference material for [Boxing research](../README.md).
 - [Consumer Acknowledgments and QoS](acknowledgments-and-qos.md) — ack, nack, reject, prefetch, consumer modes
 - [Publisher Confirms](publisher-confirms.md) — confirm mode, delivery tags, async confirms, data safety
 - [JS/TS Client Libraries](js-ts-clients.md) — amqplib, rabbitmq-client, amqp-client.js, cross-platform
+- [State Machines](state-machines.md) — formal state machines for connection, channel, message, and consumer lifecycles
 
 ## Supplementary Reference
 

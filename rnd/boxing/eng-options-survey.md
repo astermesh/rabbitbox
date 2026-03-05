@@ -247,9 +247,10 @@ The `expiration` property is **removed** from dead-lettered messages to prevent 
 ### Dead-letter routing loops
 
 - If Queue A dead-letters to Queue B, and Queue B dead-letters to Queue A, a loop forms
-- RabbitMQ detects these loops
-- Messages can cycle between queues a maximum of **16 times**
-- After 16 cycles, if no rejection event occurs within the loop, TTL is disabled on the affected messages to prevent infinite routing
+- RabbitMQ detects these loops by tracking `x-death` entries (keyed by `{queue, reason}` tuples)
+- A cycle is detected when a message reaches the **same queue twice**
+- If there was **no rejection** (`basic.reject`/`basic.nack` with `requeue=false`) anywhere in the cycle, the message is **dropped**
+- If there **was** a rejection in the cycle, the message continues (assumption: a consumer is intentionally re-routing it)
 
 ### Queue expiry vs message dead-lettering
 
