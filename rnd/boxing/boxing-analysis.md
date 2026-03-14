@@ -867,7 +867,7 @@ Provide a drop-in replacement for `amqplib` that routes to in-memory RabbitBox i
 
 ```typescript
 // Adapter: amqplib API shape → RabbitBox calls
-import amqp from '@simbox/rabbit-amqplib-adapter'
+import amqp from 'rabbit-amqplib-adapter'
 
 const conn = await amqp.connect('amqp://rabbitbox')  // no real TCP
 const ch = await conn.createChannel()
@@ -1186,11 +1186,11 @@ Example Laws:
 ### 13.2 Package Structure
 
 ```
-@simbox/rabbit-sbi      — SBI type definitions (contexts, hooks)
-@simbox/rabbit-box       — RabbitBox (Eng + SBI hooks)
-@simbox/rabbit-sim       — RabbitSim (behavior simulation)
-@simbox/rabbit-amqplib   — amqplib-compatible adapter
-@simbox/rabbit-stomp     — STOMP-over-WS adapter (optional)
+rabbit-sbi      — SBI type definitions (contexts, hooks)
+rabbit-box       — RabbitBox (Eng + SBI hooks)
+rabbit-sim       — RabbitSim (behavior simulation)
+rabbit-amqplib   — amqplib-compatible adapter
+rabbit-stomp     — STOMP-over-WS adapter (optional)
 ```
 
 ### 13.3 Testing Strategy
