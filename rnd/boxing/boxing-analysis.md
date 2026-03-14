@@ -23,7 +23,7 @@ Comprehensive research on boxing RabbitMQ into a SimBox-compatible Box. Covers A
 
 ## 1. Goal
 
-Create **RabbitBox** — an in-memory RabbitMQ emulator wrapped with SBP hooks on all boundaries. The result:
+Create **RabbitBox** — an in-memory RabbitMQ emulator wrapped with SBS hooks on all boundaries. The result:
 
 - **Without Sim**: a working in-memory AMQP broker for fast tests (no Docker, no external process)
 - **With Sim (RabbitSim)**: realistic message broker behavior — delivery delays, queue backpressure, consumer failures, dead-letter routing, memory limits, network partitions
@@ -333,7 +333,7 @@ For an in-memory broker, outbound dependencies are minimal but critical:
 - Simulate network partition between broker and consumer
 - Simulate slow consumer
 
-### Step 5: Apply SBP
+### Step 5: Apply SBS
 
 Wrap every boundary (IBI + OBI) with Hook lifecycle:
 
@@ -356,7 +356,7 @@ Src / Exp ──▶ ●─publish────▶ ┌─────────�
               ●─purge──────▶ │  queues/bindings │
               ●─cancel─────▶ │  consumers       │
                               └──────────────────┘
-              ● = SBI hook point (SBP applied)
+              ● = SBI hook point (SBS applied)
 ```
 
 ---
@@ -492,7 +492,7 @@ interface MessageProperties {
 | Dead letter routing | Medium | ~100 | Re-publish to DLX with x-death |
 | Priority queues | Low-Medium | ~80 | Multiple buckets |
 | Connection/channel model | Low | ~100 | Lightweight for in-process |
-| **Total** | | **~1200** | Core broker without SBP hooks |
+| **Total** | | **~1200** | Core broker without SBS hooks |
 
 This is manageable. Compare: PGlite is thousands of lines but we use it as a dependency. Here the Eng is custom-built but the domain is much simpler than a SQL database.
 
@@ -1072,7 +1072,7 @@ Implementation priority: LOW. Programmatic inspection methods on the RabbitBox i
 
 ## 12. RabbitSim Capabilities
 
-What RabbitSim can simulate via SBP hooks:
+What RabbitSim can simulate via SBS hooks:
 
 ### 12.1 Virtual Domain State
 
@@ -1165,7 +1165,7 @@ Example Laws:
 - Consumer dispatch (round-robin, prefetch)
 - Ack/nack/reject with requeue
 - Basic message properties
-- SBP hooks on all boundaries
+- SBS hooks on all boundaries
 
 **Phase 2: Advanced Broker Features**
 - Dead letter exchanges
@@ -1196,7 +1196,7 @@ Example Laws:
 ### 13.3 Testing Strategy
 
 1. **Unit tests for Eng**: exchange routing correctness, consumer dispatch, ack tracking
-2. **SBP integration tests**: hook interception, pre/post decisions (mirror KVBox test patterns)
+2. **SBS integration tests**: hook interception, pre/post decisions (mirror KVBox test patterns)
 3. **Compatibility tests**: run against amqplib test expectations
 4. **Sim scenario tests**: validate each simulation scenario from section 12.2
 
