@@ -1,4 +1,4 @@
-# R01: Boxing Research
+# R01: Box Research
 
 - [Description](description.md)
 

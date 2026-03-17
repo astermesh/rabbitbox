@@ -1,4 +1,4 @@
-# E01: Boxing RabbitMQ
+# E01: Box RabbitMQ
 
 - [Description](description.md)
 - [Research](research/README.md)

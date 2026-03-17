@@ -1,8 +1,8 @@
-# R01: Boxing Research
+# R01: Box Research
 
 **Status:** done
 
-Research on boxing RabbitMQ into an in-memory emulator. Covers AMQP 0-9-1 protocol internals, interface mapping (IBI/OBI/SBI), eng selection, cross-platform analysis, and implementation strategy.
+Research on box RabbitMQ into an in-memory emulator. Covers AMQP 0-9-1 protocol internals, interface mapping (IBI/OBI/SBI), eng selection, cross-platform analysis, and implementation strategy.
 
 ## Materials
 
