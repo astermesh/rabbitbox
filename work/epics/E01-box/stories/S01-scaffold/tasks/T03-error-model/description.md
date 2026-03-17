@@ -1,5 +1,7 @@
 # T03: AMQP Error Model
 
+**Status:** done
+
 Implement the AMQP 0-9-1 error model with exact RabbitMQ error codes, messages, and channel/connection error classification.
 
 ## Scope
