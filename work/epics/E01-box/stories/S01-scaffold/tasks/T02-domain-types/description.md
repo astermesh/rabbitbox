@@ -1,5 +1,7 @@
 # T02: Core Domain Types
 
+**Status:** done
+
 Define all core domain type interfaces used throughout the eng.
 
 ## Scope
