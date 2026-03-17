@@ -1,5 +1,7 @@
 # T01: Queue Registry
 
+**Status:** done
+
 Implement the queue store with CRUD operations.
 
 ## Scope
