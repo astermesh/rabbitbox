@@ -1,5 +1,7 @@
 # T01: Exchange Registry
 
+**Status:** done
+
 Implement the exchange store with CRUD operations and default exchanges.
 
 ## Scope

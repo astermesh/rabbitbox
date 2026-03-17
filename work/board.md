@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [E01S01: Project scaffold & domain model](epics/E01-box/stories/S01-scaffold/README.md)
+- [E01S02: Exchange routing engine](epics/E01-box/stories/S02-exchange-routing/README.md)
 
 ## Up Next
 
