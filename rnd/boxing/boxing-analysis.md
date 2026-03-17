@@ -7,17 +7,18 @@ Comprehensive research on boxing RabbitMQ into a SimBox-compatible Box. Covers A
 1. [Goal](#1-goal)
 2. [AMQP 0-9-1 Protocol Overview](#2-amqp-0-9-1-protocol-overview)
 3. [RabbitMQ Core Concepts](#3-rabbitmq-core-concepts)
-4. [Boxing Process Applied](#4-boxing-process-applied)
-5. [Eng Selection: In-Memory AMQP Broker](#5-eng-selection-in-memory-amqp-broker)
-6. [IBI: Inbound Box Interface](#6-ibi-inbound-box-interface)
-7. [OBI: Outbound Box Interface](#7-obi-outbound-box-interface)
-8. [SBI: RabbitBox Hook Types](#8-sbi-rabbitbox-hook-types)
-9. [Cross-Platform Analysis](#9-cross-platform-analysis)
-10. [Client Libraries Landscape](#10-client-libraries-landscape)
-11. [Management API Interface](#11-management-api-interface)
-12. [RabbitSim Capabilities](#12-rabbitsim-capabilities)
-13. [Implementation Strategy](#13-implementation-strategy)
-14. [Open Questions](#14-open-questions)
+4. [AMQP Error Model](#4-amqp-error-model)
+5. [Boxing Process Applied](#5-boxing-process-applied)
+6. [Eng Selection: In-Memory AMQP Broker](#6-eng-selection-in-memory-amqp-broker)
+7. [IBI: Inbound Box Interface](#7-ibi-inbound-box-interface)
+8. [OBI: Outbound Box Interface](#8-obi-outbound-box-interface)
+9. [SBI: RabbitBox Hook Types](#9-sbi-rabbitbox-hook-types)
+10. [Cross-Platform Analysis](#10-cross-platform-analysis)
+11. [Client Libraries Landscape](#11-client-libraries-landscape)
+12. [Management API Interface](#12-management-api-interface)
+13. [RabbitSim Capabilities](#13-rabbitsim-capabilities)
+14. [Implementation Strategy](#14-implementation-strategy)
+15. [Open Questions](#15-open-questions)
 
 ---
 
@@ -217,6 +218,35 @@ Dead-lettered messages are republished to the configured DLX with:
 - Original exchange/routing key in `x-death` headers
 - Optional routing key override via `x-dead-letter-routing-key`
 - `x-death` header array tracks death history (queue, reason, count, time)
+- Per-message `expiration` property is **removed** from dead-lettered messages to prevent re-expiry in the DLX target queue
+
+**x-death header fields** (per entry in the array, ordered by recency):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `queue` | longstr | Source queue name where dead-lettering occurred |
+| `reason` | longstr | `rejected`, `expired`, `maxlen`, or `delivery_limit` |
+| `count` | long | Number of times dead-lettered for this reason from this queue |
+| `exchange` | longstr | Exchange the message was published to |
+| `routing-keys` | array of longstr | Original routing keys |
+| `time` | timestamp | Time of dead-lettering |
+| `original-expiration` | longstr | Original TTL (only if dead-lettered due to per-message TTL) |
+
+Additional first-death annotations: `x-first-death-queue`, `x-first-death-reason`, `x-first-death-exchange` — set on first dead-lettering, never modified.
+
+**Dead letter cycle detection** (verified against RabbitMQ source `rabbit_dead_letter.erl` + `mc.erl`):
+
+RabbitMQ detects cycles by checking if the message has already been dead-lettered from the target queue. The algorithm:
+1. For each target queue in the DLX routing result, check `x-death` records
+2. If the message was previously dead-lettered from this target queue, AND all death reasons in the cycle path are **not** `rejected` — this is a cycle, message is dropped
+3. If any death reason in the cycle is `rejected` — the cycle is allowed (because a client explicitly rejected, meaning the cycle is intentional)
+4. `rejected` reason completely bypasses cycle detection (shortcut in the code)
+
+There is **no numeric limit** on cycle iterations — the detection is based on queue name presence in death history, not a counter. A message is dropped immediately upon detecting the first fully-automatic cycle.
+
+**Queue expiry vs dead-lettering**: if an entire queue expires via `x-expires`, messages in the queue are **not** dead-lettered — they are silently discarded.
+
+**At-most-once vs at-least-once**: default dead-lettering is at-most-once (fire-and-forget republish). Quorum queues support at-least-once dead-lettering with internal publisher confirms. For RabbitBox in-memory Eng, at-most-once is sufficient — in-memory delivery is inherently reliable.
 
 ### 3.9 Heartbeats
 
@@ -231,9 +261,148 @@ Dead-lettered messages are republished to the configured DLX with:
 - Default vhost: `/`
 - Users get permissions per vhost (configure, write, read — regex patterns)
 
+### 3.11 Exchange-to-Exchange Bindings
+
+RabbitMQ extension. Exchanges can bind to other exchanges, not just queues. The `exchange.bind` method creates a unidirectional binding from a source exchange to a destination exchange.
+
+- Routing semantics are identical to exchange-to-queue bindings (same binding keys, same exchange type rules)
+- Messages flow: source exchange → destination exchange → further routing
+- RabbitMQ detects and eliminates cycles during message delivery — each queue receives exactly one copy of a message regardless of routing topology complexity
+- Auto-delete exchanges are removed when all bindings where the exchange is the **source** are deleted (not when it's only a destination)
+
+**For RabbitBox**: low usage in practice, but needed for behavioral parity. Implement in Phase 2.
+
+### 3.12 Alternate Exchanges
+
+When a message published to an exchange cannot be routed to any queue, it can be republished to an alternate exchange (AE) instead of being silently dropped.
+
+- Configured via `alternate-exchange` argument in `exchange.declare` or via policy (arguments take precedence)
+- Cascades: if the AE also can't route, it checks its own AE, and so on — until routing succeeds, chain ends, or a previously-attempted AE is encountered
+- **Interaction with mandatory flag**: if a message routes via an AE, it counts as routed — no `basic.return` is sent
+- Requires `configure` permission on the declared exchange, `read` on declared exchange, `write` on the AE
+
+### 3.13 Mandatory Messages and basic.return
+
+When `mandatory=true` is set on `basic.publish` and the message cannot be routed to any queue:
+- Broker sends `basic.return` back to the publishing channel
+- `basic.return` contains: `reply-code` (312 NO_ROUTE), `reply-text`, `exchange`, `routing-key`, plus the original message content
+
+When `mandatory=false` (default): unroutable messages are silently discarded (unless alternate exchange is configured).
+
+**Interaction with publisher confirms**: `basic.return` is sent **before** `basic.ack`. The ordering guarantee is: return first, then confirm.
+
+**`immediate` flag**: defined in AMQP 0-9-1 spec but **not supported** by RabbitMQ (removed in 3.0). Publishing with `immediate=true` causes a channel error.
+
+### 3.14 Publisher Confirms (Detail)
+
+When `confirm.select` is sent on a channel:
+- Channel enters confirm mode (irreversible for that channel)
+- A transactional channel cannot enter confirm mode (and vice versa)
+- Both broker and client count messages starting at 1
+- Broker sends `basic.ack(deliveryTag, multiple)` on successful handling
+- Broker sends `basic.nack(deliveryTag, multiple)` on internal error only (rare — only when Erlang queue process crashes)
+- `multiple=true` means: all messages up to and including this `deliveryTag` are confirmed
+- For unroutable messages: confirm is sent once the exchange verifies no matching queues
+- For routable messages: confirm is sent when all matching queues have accepted the message (for persistent messages in durable queues, this means persisting to disk)
+- Ordering: confirms are generally in publish order on a single channel, but applications should not depend on this
+
+### 3.15 basic.recover
+
+Redelivers all unacknowledged messages on the channel.
+
+- `basic.recover(requeue)`: if `requeue=true`, unacked messages are requeued and may be delivered to different consumers
+- In RabbitMQ, `requeue=false` (redeliver to same consumer) is **not supported** — always requeues
+- Server responds with `basic.recover-ok`
+- Redelivered messages have `redelivered=true` flag set
+
+### 3.16 Passive Declarations (checkExchange / checkQueue)
+
+The `passive` flag on `exchange.declare` and `queue.declare`:
+- If `passive=true`: server checks if the entity exists and replies with `declare-ok` if it does, or raises `404 NOT_FOUND` channel error if it doesn't
+- Does **not** create the entity — read-only check
+- In amqplib: exposed as `checkExchange(name)` and `checkQueue(name)`
+- `checkQueue` returns `{ queue, messageCount, consumerCount }` — useful for inspection
+
+### 3.17 Consumer Cancellation Notifications
+
+RabbitMQ extension. Broker can asynchronously cancel a consumer by sending `basic.cancel` to the client:
+
+- Triggered by: queue deletion, queue leader node failure, queue becoming unavailable
+- Client must declare `consumer_cancel_notify` capability during connection
+- Different from client-initiated `basic.cancel` — this is server-initiated
+- Consumer receives `null` message in amqplib when cancelled by server
+
+### 3.18 Single Active Consumer
+
+When `x-single-active-consumer=true` is set on a queue:
+- Only one consumer at a time receives messages from the queue
+- Other registered consumers are on standby
+- When the active consumer is cancelled or its connection drops, the next registered consumer becomes active
+- On quorum queues, a new consumer with higher priority can preempt the current active consumer (messages are drained first)
+- Ensures strict message ordering guarantees
+
 ---
 
-## 4. Boxing Process Applied
+## 4. AMQP Error Model
+
+### 4.1 Reply Codes
+
+Verified against the AMQP 0-9-1 XML specification (`amqp0-9-1.extended.xml`):
+
+| Code | Name | Level | Description |
+|------|------|-------|-------------|
+| 200 | reply-success | — | Method completed successfully |
+| 311 | content-too-large | channel (soft) | Content body too large |
+| 312 | no-route | channel (soft) | Mandatory message cannot be routed (sent with `basic.return`) |
+| 313 | no-consumers | channel (soft) | Immediate message has no consumers (not supported by RabbitMQ) |
+| 320 | connection-forced | connection (hard) | Operator intervention to close connection |
+| 402 | invalid-path | connection (hard) | Client tried to access unknown virtual host |
+| 403 | access-refused | channel (soft) | No access due to security settings |
+| 404 | not-found | channel (soft) | Entity does not exist (queue, exchange) |
+| 405 | resource-locked | channel (soft) | Exclusive queue accessed by another connection |
+| 406 | precondition-failed | channel (soft) | Precondition failed (e.g., redeclare with different properties) |
+| 501 | frame-error | connection (hard) | Malformed frame |
+| 502 | syntax-error | connection (hard) | Illegal field values |
+| 503 | command-invalid | connection (hard) | Invalid sequence of frames |
+| 504 | channel-error | connection (hard) | Channel not correctly opened |
+| 505 | unexpected-frame | connection (hard) | Unexpected frame type |
+| 506 | resource-error | connection (hard) | Insufficient resources |
+| 530 | not-allowed | connection (hard) | Prohibited action |
+| 540 | not-implemented | connection (hard) | Functionality not implemented |
+| 541 | internal-error | connection (hard) | Internal error requiring operator intervention |
+
+### 4.2 Channel-Level vs Connection-Level Errors
+
+**Channel errors (soft)** close only the affected channel. The connection and other channels remain open. Common triggers:
+
+| Error | Code | Typical Trigger |
+|-------|------|-----------------|
+| NOT_FOUND | 404 | `queue.bind` to non-existing queue/exchange, `basic.consume` on missing queue, `basic.publish` to non-existing exchange, passive declare of non-existing entity |
+| PRECONDITION_FAILED | 406 | Redeclare queue/exchange with different properties, duplicate `basic.ack` for same delivery tag, `basic.ack` on wrong channel |
+| ACCESS_REFUSED | 403 | Insufficient permissions for the operation |
+| RESOURCE_LOCKED | 405 | Accessing exclusive queue from a different connection |
+
+**Connection errors (hard)** close the entire connection including all channels. These indicate protocol-level violations:
+
+| Error | Code | Typical Trigger |
+|-------|------|-----------------|
+| connection-forced | 320 | Operator closed connection, resource alarm |
+| invalid-path | 402 | Unknown virtual host |
+| frame-error | 501 | Malformed frame structure |
+| command-invalid | 503 | Operations on a closed channel, invalid method sequence |
+| channel-error | 504 | Operations on an unopened channel |
+| not-allowed | 530 | Exceeded negotiated `channel_max` |
+
+### 4.3 Error Model for RabbitBox
+
+For in-process boxing without wire protocol, errors map to:
+- **Channel errors** → throw a typed `ChannelError` with code and message, mark channel as closed
+- **Connection errors** → throw a typed `ConnectionError`, mark connection and all its channels as closed
+- Error codes and messages must match RabbitMQ exactly for behavioral parity
+
+---
+
+## 5. Boxing Process Applied
 
 Following the standard boxing process from R04:
 
@@ -267,8 +436,12 @@ For in-process boxing, we don't need the binary wire protocol. The BI is the pro
 | BI Method | AMQP Equivalent | Direction |
 |-----------|-----------------|-----------|
 | `exchangeDeclare(name, type, opts)` | `exchange.declare` | Topology |
+| `checkExchange(name)` | `exchange.declare` (passive) | Topology |
 | `exchangeDelete(name, opts)` | `exchange.delete` | Topology |
+| `exchangeBind(dest, source, routingKey, args)` | `exchange.bind` | Topology |
+| `exchangeUnbind(dest, source, routingKey, args)` | `exchange.unbind` | Topology |
 | `queueDeclare(name, opts)` | `queue.declare` | Topology |
+| `checkQueue(name)` | `queue.declare` (passive) | Topology |
 | `queueDelete(name, opts)` | `queue.delete` | Topology |
 | `queueBind(queue, exchange, routingKey, args)` | `queue.bind` | Topology |
 | `queueUnbind(queue, exchange, routingKey, args)` | `queue.unbind` | Topology |
@@ -280,7 +453,9 @@ For in-process boxing, we don't need the binary wire protocol. The BI is the pro
 | `reject(deliveryTag, requeue)` | `basic.reject` | Inbound |
 | `get(queue, opts)` | `basic.get` | Inbound |
 | `prefetch(count, global)` | `basic.qos` | Inbound |
+| `recover(requeue)` | `basic.recover` | Inbound |
 | `purgeQueue(queue)` | `queue.purge` | Inbound |
+| `confirmSelect()` | `confirm.select` | Inbound |
 
 ### Step 3: Map IBI Points
 
@@ -292,15 +467,20 @@ Src / Exp ─────▶ ●─ publish ──────▶ ┌───�
                  ●─ consume ──────▶ │                        │
                  ●─ ack/nack ─────▶ │       Eng              │
                  ●─ get ──────────▶ │  (in-memory broker)    │
-                 ●─ declareExch ──▶ │                        │
-                 ●─ declareQueue ─▶ │  exchanges             │
-                 ●─ bind ─────────▶ │  queues                │
-                 ●─ unbind ───────▶ │  bindings              │
-                 ●─ deleteExch ───▶ │  consumers             │
-                 ●─ deleteQueue ──▶ │  unacked messages      │
+                 ●─ recover ──────▶ │                        │
+                 ●─ declareExch ──▶ │  exchanges             │
+                 ●─ checkExch ────▶ │  queues                │
+                 ●─ declareQueue ─▶ │  bindings              │
+                 ●─ checkQueue ───▶ │  consumers             │
+                 ●─ bind ─────────▶ │  unacked messages      │
+                 ●─ unbind ───────▶ │                        │
+                 ●─ exchBind ─────▶ │                        │
+                 ●─ deleteExch ───▶ │                        │
+                 ●─ deleteQueue ──▶ │                        │
                  ●─ prefetch ─────▶ │                        │
                  ●─ purge ────────▶ │                        │
-                 ●─ cancel ───────▶ └────────────────────────┘
+                 ●─ cancel ───────▶ │                        │
+                 ●─ confirmSelect ▶ └────────────────────────┘
 ```
 
 **Grouped by concern:**
@@ -309,9 +489,10 @@ Src / Exp ─────▶ ●─ publish ──────▶ ┌───�
 |-------|----------------|--------------|
 | **Publishing** | `publish` | Latency, rate limiting, reject, confirm delay |
 | **Consuming** | `consume`, `get`, `cancel` | Delivery delay, consumer failure, rebalance |
-| **Acknowledgment** | `ack`, `nack`, `reject` | Ack delay, nack simulation, requeue behavior |
-| **Topology** | `exchangeDeclare`, `exchangeDelete`, `queueDeclare`, `queueDelete`, `queueBind`, `queueUnbind`, `purge` | Topology validation, limit enforcement |
+| **Acknowledgment** | `ack`, `nack`, `reject`, `recover` | Ack delay, nack simulation, requeue behavior, mass redeliver |
+| **Topology** | `exchangeDeclare`, `checkExchange`, `exchangeDelete`, `exchangeBind`, `exchangeUnbind`, `queueDeclare`, `checkQueue`, `queueDelete`, `queueBind`, `queueUnbind`, `purge` | Topology validation, limit enforcement |
 | **QoS** | `prefetch` | Prefetch simulation |
+| **Channel mode** | `confirmSelect` | Confirm mode activation |
 
 ### Step 4: Map OBI Points
 
@@ -325,6 +506,7 @@ For an in-memory broker, outbound dependencies are minimal but critical:
 | **timers** | `setTimeout` / `setInterval` for delayed delivery, queue expiry checks, consumer timeout | Virtual timer management |
 | **random** | Consumer tag generation, message ID generation | Deterministic IDs |
 | **delivery** | Internal: message dispatch from queue to consumer callback | Delivery delay, consumer failure injection |
+| **return** | Internal: `basic.return` sent to publisher when mandatory message is unroutable | Return delay, suppress returns, transform return reason |
 | **persist** | If persistence is added: writing messages/topology to storage | Disk I/O simulation |
 
 **Key insight**: The `delivery` OBI point is unique to message brokers. When a message is routed to a queue and a consumer is ready, the broker internally dispatches the message to the consumer's callback. This is an outbound boundary — the broker "calls out" to deliver. Sim can intercept to:
@@ -332,6 +514,8 @@ For an in-memory broker, outbound dependencies are minimal but critical:
 - Simulate consumer crash
 - Simulate network partition between broker and consumer
 - Simulate slow consumer
+
+**`return` OBI point**: when a mandatory message cannot be routed, the broker calls back to the publisher with `basic.return`. This is an outbound boundary — the Eng "calls out" to notify the publisher. Sim can intercept to delay returns, suppress them, or inject returns for non-mandatory messages.
 
 ### Step 5: Apply SBS
 
@@ -351,19 +535,20 @@ Src / Exp ──▶ ●─publish────▶ ┌─────────�
               ●─consume────▶ │                  │ ──timers── ●
               ●─ack/nack───▶ │   Eng            │ ──random── ●
               ●─get────────▶ │   (AMQP broker)  │ ──deliver─ ● ──▶ Consumer cb
-              ●─topology───▶ │                  │ ──persist─ ●
-              ●─prefetch───▶ │  exchanges       │
-              ●─purge──────▶ │  queues/bindings │
-              ●─cancel─────▶ │  consumers       │
-                              └──────────────────┘
+              ●─recover─────▶ │                  │ ──return── ● ──▶ Publisher cb
+              ●─topology───▶ │  exchanges       │ ──persist─ ●
+              ●─prefetch───▶ │  queues/bindings │
+              ●─purge──────▶ │  consumers       │
+              ●─cancel─────▶ │                  │
+              ●─confirmSel─▶ └──────────────────┘
               ● = SBI hook point (SBS applied)
 ```
 
 ---
 
-## 5. Eng Selection: In-Memory AMQP Broker
+## 6. Eng Selection: In-Memory AMQP Broker
 
-### 5.1 What Eng Must Implement
+### 6.1 What Eng Must Implement
 
 The core broker logic that lives inside RabbitBox:
 
@@ -479,7 +664,7 @@ interface MessageProperties {
 }
 ```
 
-### 5.2 Complexity Assessment
+### 6.2 Complexity Assessment
 
 | Component | Complexity | Lines (est.) | Notes |
 |-----------|-----------|-------------|-------|
@@ -496,7 +681,7 @@ interface MessageProperties {
 
 This is manageable. Compare: PGlite is thousands of lines but we use it as a dependency. Here the Eng is custom-built but the domain is much simpler than a SQL database.
 
-### 5.3 Existing Mocks Analysis
+### 6.3 Existing Mocks Analysis
 
 | Package | Downloads/wk | Last Updated | What It Does | Usable as Eng? |
 |---------|-------------|-------------|--------------|----------------|
@@ -509,11 +694,11 @@ This is manageable. Compare: PGlite is thousands of lines but we use it as a dep
 
 ---
 
-## 6. IBI: Inbound Box Interface
+## 7. IBI: Inbound Box Interface
 
 Full specification of every inbound hook point with context types:
 
-### 6.1 publish
+### 7.1 publish
 
 ```typescript
 interface PublishCtx {
@@ -542,7 +727,7 @@ type PublishResult = {
 - Pre: delay (simulate slow publish), fail (simulate channel error), short_circuit (silently drop)
 - Post: transform (modify routed status), delay (confirm delay)
 
-### 6.2 consume
+### 7.2 consume
 
 ```typescript
 interface ConsumeCtx {
@@ -563,7 +748,7 @@ interface ConsumeMeta {
 type ConsumeResult = { consumerTag: string }
 ```
 
-### 6.3 ack / nack / reject
+### 7.3 ack / nack / reject
 
 ```typescript
 interface AckCtx {
@@ -601,7 +786,7 @@ type NackResult = void
 // reject is same shape as nack but single message only (no multiple flag)
 ```
 
-### 6.4 get (polling)
+### 7.4 get (polling)
 
 ```typescript
 interface GetCtx {
@@ -620,7 +805,7 @@ interface GetMeta {
 type GetResult = DeliveredMessage | null
 ```
 
-### 6.5 Topology Operations
+### 7.5 Topology Operations
 
 ```typescript
 interface ExchangeDeclareCtx {
@@ -660,7 +845,7 @@ interface QueueBindCtx {
 // Similar patterns for exchangeDelete, queueDelete, queueUnbind, purge
 ```
 
-### 6.6 prefetch
+### 7.6 prefetch
 
 ```typescript
 interface PrefetchCtx {
@@ -675,11 +860,86 @@ interface PrefetchCtx {
 type PrefetchResult = void
 ```
 
+### 7.7 recover
+
+```typescript
+interface RecoverCtx {
+  readonly requeue: boolean  // RabbitMQ always requeues regardless of this flag
+  readonly meta: {
+    readonly unackedCount: number  // messages that will be requeued
+  }
+}
+
+type RecoverResult = void
+```
+
+**Note**: RabbitMQ ignores `requeue=false` and always requeues. RabbitBox must match this behavior.
+
+### 7.8 checkExchange / checkQueue (passive declare)
+
+```typescript
+interface CheckExchangeCtx {
+  readonly name: string
+  readonly meta: {
+    readonly exists: boolean
+  }
+}
+
+type CheckExchangeResult = void  // success or 404 NOT_FOUND channel error
+
+interface CheckQueueCtx {
+  readonly name: string
+  readonly meta: {
+    readonly exists: boolean
+    readonly messageCount: number
+    readonly consumerCount: number
+  }
+}
+
+type CheckQueueResult = {
+  queue: string
+  messageCount: number
+  consumerCount: number
+}
+```
+
+### 7.9 confirmSelect
+
+```typescript
+interface ConfirmSelectCtx {
+  readonly meta: {
+    readonly alreadyInConfirmMode: boolean
+    readonly channelIsTransactional: boolean  // if true, operation must fail
+  }
+}
+
+type ConfirmSelectResult = void
+```
+
+### 7.10 exchangeBind / exchangeUnbind
+
+```typescript
+interface ExchangeBindCtx {
+  readonly destination: string
+  readonly source: string
+  readonly routingKey: string
+  readonly arguments: Record<string, unknown>
+  readonly meta: {
+    readonly destinationExists: boolean
+    readonly sourceExists: boolean
+  }
+}
+
+type ExchangeBindResult = void
+
+// exchangeUnbind has identical context shape
+```
+
 ---
 
-## 7. OBI: Outbound Box Interface
+## 8. OBI: Outbound Box Interface
 
-### 7.1 time
+### 8.1 time
 
 ```typescript
 interface TimeCtx {
@@ -694,7 +954,7 @@ Used for: message `timestamp` property, TTL expiry calculations, queue auto-expi
 
 **Sim pattern**: short_circuit → return virtual time. Same as KVBox.
 
-### 7.2 timers
+### 8.2 timers
 
 ```typescript
 interface TimerSetCtx {
@@ -716,7 +976,7 @@ type TimerFireResult = void
 
 **Sim pattern**: intercept timer creation, manage in virtual timer queue. Enables time-jump for TTL testing.
 
-### 7.3 random
+### 8.3 random
 
 ```typescript
 interface RandomCtx {
@@ -729,7 +989,7 @@ type RandomResult = string  // generated identifier
 
 **Sim pattern**: short_circuit → return deterministic value from seed.
 
-### 7.4 delivery
+### 8.4 delivery
 
 ```typescript
 interface DeliveryCtx {
@@ -757,7 +1017,31 @@ This is the **most important OBI point** for RabbitSim. The broker dispatches me
 - **short_circuit**: prevent delivery (simulate consumer being paused)
 - **transform**: modify message before delivery (corrupt data simulation)
 
-### 7.5 persist (optional)
+### 8.5 return (mandatory messages)
+
+```typescript
+interface ReturnCtx {
+  readonly exchange: string
+  readonly routingKey: string
+  readonly replyCode: number       // 312 (NO_ROUTE)
+  readonly replyText: string
+  readonly message: BrokerMessage
+  readonly meta: {
+    readonly mandatory: boolean
+    readonly publisherChannelId: string
+  }
+}
+
+type ReturnResult = void
+```
+
+Sent when a mandatory message cannot be routed to any queue. The return is sent **before** the publisher confirm (`basic.ack`).
+
+**Sim decisions**:
+- Pre: delay (simulate slow return notification), fail (swallow the return)
+- Post: transform (modify reply code/text)
+
+### 8.6 persist (optional)
 
 ```typescript
 interface PersistCtx {
@@ -775,7 +1059,7 @@ Only relevant if we simulate durable messages/queues. For in-memory Eng, persist
 
 ---
 
-## 8. SBI: RabbitBox Hook Types
+## 9. SBI: RabbitBox Hook Types
 
 Combined SBI definition:
 
@@ -793,11 +1077,16 @@ interface RabbitInboundHooks {
   ack: Hook<AckCtx, AckResult>
   nack: Hook<NackCtx, NackResult>
   reject: Hook<RejectCtx, RejectResult>
+  recover: Hook<RecoverCtx, RecoverResult>
 
   // Topology
   exchangeDeclare: Hook<ExchangeDeclareCtx, ExchangeDeclareResult>
+  checkExchange: Hook<CheckExchangeCtx, CheckExchangeResult>
   exchangeDelete: Hook<ExchangeDeleteCtx, ExchangeDeleteResult>
+  exchangeBind: Hook<ExchangeBindCtx, ExchangeBindResult>
+  exchangeUnbind: Hook<ExchangeUnbindCtx, ExchangeUnbindResult>
   queueDeclare: Hook<QueueDeclareCtx, QueueDeclareResult>
+  checkQueue: Hook<CheckQueueCtx, CheckQueueResult>
   queueDelete: Hook<QueueDeleteCtx, QueueDeleteResult>
   queueBind: Hook<QueueBindCtx, QueueBindResult>
   queueUnbind: Hook<QueueUnbindCtx, QueueUnbindResult>
@@ -805,6 +1094,9 @@ interface RabbitInboundHooks {
 
   // QoS
   prefetch: Hook<PrefetchCtx, PrefetchResult>
+
+  // Channel mode
+  confirmSelect: Hook<ConfirmSelectCtx, ConfirmSelectResult>
 }
 
 interface RabbitOutboundHooks {
@@ -812,21 +1104,22 @@ interface RabbitOutboundHooks {
   timers: Hook<TimerSetCtx, TimerSetResult>
   random: Hook<RandomCtx, RandomResult>
   delivery: Hook<DeliveryCtx, DeliveryResult>
+  return: Hook<ReturnCtx, ReturnResult>
   persist: Hook<PersistCtx, PersistResult>
 }
 
 type RabbitHooks = RabbitInboundHooks & RabbitOutboundHooks
 ```
 
-**Hook count**: 14 IBI + 5 OBI = **19 hook points**
+**Hook count**: 21 IBI + 6 OBI = **27 hook points**
 
-Compare: KVBox has 3 IBI + 2 OBI = 5 hooks. RabbitBox has ~4x the hook surface, reflecting the broker's richer interface.
+Compare: KVBox has 3 IBI + 2 OBI = 5 hooks. RabbitBox has ~5x the hook surface, reflecting the broker's richer interface.
 
 ---
 
-## 9. Cross-Platform Analysis
+## 10. Cross-Platform Analysis
 
-### 9.1 Runtime Compatibility Matrix
+### 10.1 Runtime Compatibility Matrix
 
 RabbitBox's Eng is pure TypeScript with no native dependencies. The question is how Src connects to RabbitBox — what client library does Src use?
 
@@ -837,7 +1130,7 @@ RabbitBox's Eng is pure TypeScript with no native dependencies. The question is 
 | **Bun** | ✅ Via npm compat | Direct API or amqplib-compatible adapter |
 | **Browser** | ✅ Pure TS | Direct API or STOMP-over-WS adapter |
 
-### 9.2 Connection Mode Options
+### 10.2 Connection Mode Options
 
 There are two fundamentally different approaches for how Src connects to RabbitBox:
 
@@ -893,7 +1186,7 @@ RabbitBox listens on a port, speaks real AMQP 0-9-1 binary protocol. Any client 
 
 **Start with Option A (programmatic API)**, then build **Option B (amqplib adapter)** as a thin translation layer. Option C is only needed for Docker-based partial boxing.
 
-### 9.3 Per-Runtime Details
+### 10.3 Per-Runtime Details
 
 #### Node.js
 
@@ -928,7 +1221,7 @@ For wire protocol: browsers cannot open raw TCP sockets. Options:
 
 **Browser conclusion**: programmatic API works out of the box. STOMP-over-WS adapter is the path for protocol-level browser access.
 
-### 9.4 Cross-Platform Summary
+### 10.4 Cross-Platform Summary
 
 | Feature | Node.js | Deno | Bun | Browser |
 |---------|---------|------|-----|---------|
@@ -942,9 +1235,9 @@ For wire protocol: browsers cannot open raw TCP sockets. Options:
 
 ---
 
-## 10. Client Libraries Landscape
+## 11. Client Libraries Landscape
 
-### 10.1 Major Libraries
+### 11.1 Major Libraries
 
 | Library | Protocol | Runtime | Weekly DL | Notes |
 |---------|----------|---------|-----------|-------|
@@ -955,7 +1248,7 @@ For wire protocol: browsers cannot open raw TCP sockets. Options:
 | **deno-amqp** | AMQP 0-9-1 over TCP | Deno | N/A | Deno-native. Latest v0.24.0. |
 | **amqplib-bun** | AMQP 0-9-1 over TCP | Bun | ~138 | Fork of amqplib for Bun compatibility. |
 
-### 10.2 amqplib API Surface
+### 11.2 amqplib API Surface
 
 Since amqplib is the most popular, the amqplib-compatible adapter must implement its API:
 
@@ -1007,7 +1300,7 @@ interface Channel {
 }
 ```
 
-### 10.3 @cloudamqp/amqp-client API
+### 11.3 @cloudamqp/amqp-client API
 
 Alternative API (simpler, modern):
 
@@ -1033,11 +1326,11 @@ for await (const msg of consumer) {
 
 ---
 
-## 11. Management API Interface
+## 12. Management API Interface
 
 RabbitMQ provides an HTTP management API (via `rabbitmq_management` plugin). RabbitBox should expose a compatible subset for admin/monitoring:
 
-### 11.1 Core Endpoints
+### 12.1 Core Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -1058,7 +1351,7 @@ RabbitMQ provides an HTTP management API (via `rabbitmq_management` plugin). Rab
 | `/api/consumers` | GET | List consumers |
 | `/api/definitions` | GET/POST | Export/import definitions |
 
-### 11.2 For RabbitBox
+### 12.2 For RabbitBox
 
 The management API is **not** part of the core BI (AMQP operations). It's an auxiliary interface for:
 
@@ -1070,11 +1363,11 @@ Implementation priority: LOW. Programmatic inspection methods on the RabbitBox i
 
 ---
 
-## 12. RabbitSim Capabilities
+## 13. RabbitSim Capabilities
 
 What RabbitSim can simulate via SBS hooks:
 
-### 12.1 Virtual Domain State
+### 13.1 Virtual Domain State
 
 ```typescript
 interface RabbitSimState {
@@ -1112,7 +1405,7 @@ interface RabbitSimState {
 }
 ```
 
-### 12.2 Simulation Scenarios
+### 13.2 Simulation Scenarios
 
 | Scenario | Hook Point | Sim Action |
 |----------|-----------|------------|
@@ -1130,7 +1423,7 @@ interface RabbitSimState {
 | Priority starvation | OBI: `delivery` | Pre: delay low-priority, continue high-priority |
 | Confirm delay | IBI: `publish` | Post: delay (simulate slow persistence) |
 
-### 12.3 Interaction with Laws
+### 13.3 Interaction with Laws
 
 RabbitSim emits signals for Laws:
 
@@ -1155,25 +1448,35 @@ Example Laws:
 
 ---
 
-## 13. Implementation Strategy
+## 14. Implementation Strategy
 
-### 13.1 Phased Approach
+### 14.1 Phased Approach
 
 **Phase 1: Core Eng + Programmatic API**
 - Exchange routing (direct, fanout, topic, headers)
 - Queue storage (FIFO, basic properties)
 - Consumer dispatch (round-robin, prefetch)
 - Ack/nack/reject with requeue
+- basic.recover (requeue all unacked)
+- basic.get (polling)
+- Passive declares (checkExchange, checkQueue)
+- Mandatory messages + basic.return
 - Basic message properties
-- SBS hooks on all boundaries
+- AMQP error model (typed errors with correct codes)
+- Channel/connection lifecycle
+- SBS hooks on all boundaries (27 hook points)
 
 **Phase 2: Advanced Broker Features**
-- Dead letter exchanges
-- Message TTL + queue TTL
-- Queue overflow policies
+- Dead letter exchanges (with x-death headers, cycle detection)
+- Message TTL + queue TTL + queue expiry (x-expires)
+- Queue overflow policies (drop-head, reject-publish, reject-publish-dlx)
 - Priority queues
-- Publisher confirms
+- Publisher confirms (confirm.select, delivery tags)
 - Alternate exchanges
+- Exchange-to-exchange bindings
+- Single active consumer
+- Consumer cancellation notifications
+- Auto-delete exchanges and queues
 
 **Phase 3: Adapters**
 - amqplib-compatible adapter (Option B)
@@ -1183,7 +1486,7 @@ Example Laws:
 - AMQP 0-9-1 binary protocol parser
 - TCP server listener
 
-### 13.2 Package Structure
+### 14.2 Package Structure
 
 ```
 rabbit-sbi      — SBI type definitions (contexts, hooks)
@@ -1193,7 +1496,7 @@ rabbit-amqplib   — amqplib-compatible adapter
 rabbit-stomp     — STOMP-over-WS adapter (optional)
 ```
 
-### 13.3 Testing Strategy
+### 14.3 Testing Strategy
 
 1. **Unit tests for Eng**: exchange routing correctness, consumer dispatch, ack tracking
 2. **SBS integration tests**: hook interception, pre/post decisions (mirror KVBox test patterns)
@@ -1202,26 +1505,33 @@ rabbit-stomp     — STOMP-over-WS adapter (optional)
 
 ---
 
-## 14. Open Questions
+## 15. Open Questions
 
 ### Resolved by This Research
 
 1. **Can we build an in-memory broker?** → Yes, ~1200 lines of core logic. Domain is simpler than SQL.
 2. **Cross-platform?** → Yes, pure TS Eng works everywhere. Adapters per runtime.
 3. **Browser support?** → Yes via programmatic API. STOMP adapter for protocol access.
-4. **What to hook?** → 14 IBI + 5 OBI = 19 hook points defined.
+4. **What to hook?** → 21 IBI + 6 OBI = 27 hook points defined.
 5. **Wire protocol needed?** → No for in-process boxing. Programmatic API + adapters sufficient.
+6. **Exchange-to-exchange bindings** → Supported by RabbitMQ, cycle-safe. Low priority but needed for parity. Phase 2.
+7. **Error model** → Fully documented. 18 reply codes, clear channel vs connection error split. Channel errors = typed exceptions + channel close. Connection errors = connection + all channels close.
+8. **basic.recover** → Always requeues (RabbitMQ ignores `requeue=false`). Added to IBI hooks.
+9. **basic.return** → Sent for unroutable mandatory messages, before publisher confirm. Added as OBI hook.
+10. **Passive declares** → Read-only existence checks. 404 on missing. Added to IBI hooks.
+11. **Publisher confirms lifecycle** → confirm.select is irreversible, mutually exclusive with transactions. Delivery tags start at 1. nack only on internal Erlang process crash.
+12. **DLX cycle detection** → No numeric limit. Cycle = message already visited target queue with all-automatic reasons. `rejected` breaks cycles intentionally. Verified against source code.
 
 ### Open for Future Decision
 
-1. **Exchange-to-exchange bindings** — implement in Phase 1 or defer? (Low usage in practice)
-2. **Virtual host support** — needed for multi-tenant simulation? (Likely not in Phase 1)
-3. **Quorum queue semantics** — delivery limits are useful for Sim. How deep to emulate?
-4. **Streams** — append-only log semantics, consumer offsets. Fundamentally different from queues. Defer?
-5. **Transaction support** (tx.select/commit/rollback) — rarely used in practice. Defer?
-6. **Connection/channel lifecycle simulation** — simulate channel errors, connection drops at protocol level? Or handle at Sim level via hook failures?
-7. **amqplib adapter completeness** — full API parity or just the commonly used subset?
-8. **Message ordering guarantees** — AMQP guarantees ordering per channel per queue. How strict in Eng?
+1. **Virtual host support** — needed for multi-tenant simulation? (Likely not in Phase 1)
+2. **Quorum queue semantics** — delivery limits are useful for Sim. How deep to emulate?
+3. **Streams** — append-only log semantics, consumer offsets. Fundamentally different from queues. Defer?
+4. **Transaction support** (tx.select/commit/rollback) — rarely used in practice, mutually exclusive with confirms. Defer?
+5. **amqplib adapter completeness** — full API parity or just the commonly used subset?
+6. **Message ordering guarantees** — AMQP guarantees ordering per channel per queue. How strict in Eng?
+7. **Consumer priorities** — RabbitMQ extension allowing higher-priority consumers to receive messages first. Implement in Phase 2?
+8. **Direct reply-to** — RabbitMQ extension for RPC without declaring reply queues. Evaluate need.
 
 ---
 

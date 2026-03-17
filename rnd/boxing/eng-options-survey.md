@@ -177,6 +177,8 @@ The `x-` prefix exclusion matters for routing dead-lettered messages by their `x
 
 **Implementation note**: The binding arguments (minus `x-match` itself) form the comparison set. For each binding argument key-value pair, check if the message headers contain a matching key with equal value.
 
+**Verified against RabbitMQ source** (`rabbit_exchange_type_headers.erl`): all four modes confirmed. Additional detail: if a binding argument has AMQP type `void` (no value), the match checks only for **key presence** in message headers, not value equality. The `x-match` key itself is always excluded from comparison in all modes. Invalid `x-match` values cause a binding validation error: "expected all, any, all-with-x, or any-with-x".
+
 ---
 
 ## 6. Consumer Semantics Deep Dive
@@ -218,9 +220,16 @@ The `x-` prefix exclusion matters for routing dead-lettered messages by their `x
 - Acking on a different channel than where delivery was received causes a channel error
 - Unknown delivery tag causes a channel error
 
-### No built-in ack timeout
+### Consumer acknowledgement timeout
 
-RabbitMQ does not have a built-in timeout for acking messages. If a consumer is alive (connection intact) but stops processing, unacked messages remain unacked indefinitely.
+RabbitMQ has a configurable acknowledgement timeout (default: **30 minutes**). If a consumer does not ack its delivery within the timeout, the channel is closed with a `PRECONDITION_FAILED` channel exception. All unacked deliveries on that channel are requeued.
+
+- Evaluated periodically (one minute intervals)
+- Minimum supported value: one minute; recommended minimum: five minutes
+- Configurable per-node or per-queue (per-queue since RabbitMQ 3.12)
+- Can be set to a very high value but disabling entirely is not recommended
+
+**For RabbitBox**: this timeout is an optional feature for Phase 2. In-process testing scenarios may benefit from a shorter or configurable timeout.
 
 ---
 
@@ -233,7 +242,7 @@ Each dead-lettered message gets an `x-death` array in its headers. Each entry co
 | Field | Value |
 |-------|-------|
 | `queue` | Source queue name |
-| `reason` | `rejected`, `expired`, or `maxlen` |
+| `reason` | `rejected`, `expired`, `maxlen`, or `delivery_limit` |
 | `time` | Timestamp of dead-lettering |
 | `exchange` | Exchange the message was published to |
 | `routing-keys` | Original routing keys (array) |
@@ -246,10 +255,14 @@ The `expiration` property is **removed** from dead-lettered messages to prevent 
 
 ### Dead-letter routing loops
 
+Verified against RabbitMQ source code (`rabbit_dead_letter.erl`, `mc.erl`):
+
 - If Queue A dead-letters to Queue B, and Queue B dead-letters to Queue A, a loop forms
-- RabbitMQ detects these loops
-- Messages can cycle between queues a maximum of **16 times**
-- After 16 cycles, if no rejection event occurs within the loop, TTL is disabled on the affected messages to prevent infinite routing
+- RabbitMQ detects cycles by checking `x-death` records: if the message was previously dead-lettered from the current target queue, and all death reasons in the cycle path are **not** `rejected` — the message is dropped
+- There is **no numeric iteration limit** — detection is based on queue name presence in death history, not a counter
+- A message is dropped immediately upon detecting the first fully-automatic cycle (all reasons are `expired`, `maxlen`, or `delivery_limit`)
+- If any death reason in the cycle is `rejected`, the cycle is allowed — because a client explicitly rejected, the cycle is considered intentional
+- `rejected` reason completely bypasses cycle detection (shortcut in the code)
 
 ### Queue expiry vs message dead-lettering
 
