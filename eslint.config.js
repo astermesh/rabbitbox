@@ -12,7 +12,7 @@ export default [
     ignores: ['dist/**', 'node_modules/**', '**/*.js', '**/*.cjs', '**/*.mjs'],
   },
   {
-    files: ['src/**/*.ts'],
+    files: ['packages/*/src/**/*.ts'],
     languageOptions: {
       parserOptions: {
         projectService: true,

@@ -236,6 +236,7 @@ Code that evolves together should live close together (same module, same directo
 ### Test Placement
 
 Tests must be co-located with the code they test (e.g., `foo.ts` → `foo.test.ts` in the same directory). Do not separate tests into a dedicated test tree.
+
 ### File Naming Conventions
 
 - Use lowercase, hyphens for spaces (e.g., `canvas-renderer.ts`)

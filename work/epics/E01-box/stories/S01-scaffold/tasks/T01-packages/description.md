@@ -1,5 +1,7 @@
 # T01: Package Structure & Build Config
 
+**Status:** done
+
 Set up the monorepo with two packages and configure the build toolchain.
 
 ## Scope
