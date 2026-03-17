@@ -1,5 +1,7 @@
 # T02: Message Storage
 
+**Status:** done
+
 Implement per-queue FIFO message storage.
 
 ## Scope
