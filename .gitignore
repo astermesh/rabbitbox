@@ -3,6 +3,7 @@
 # npm
 node_modules/
 dist/
+*.tsbuildinfo
 coverage/
 
 # Deno

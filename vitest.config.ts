@@ -46,14 +46,14 @@ type SearchConfig = {
 };
 
 const patterns = {
-  all: ['src/**/*.test.ts'],
+  all: ['packages/*/src/**/*.test.ts'],
   integration: [
-    'src/**/*.db.test.ts',
-    'src/**/*.io.test.ts',
-    'src/**/*.api.test.ts',
+    'packages/*/src/**/*.db.test.ts',
+    'packages/*/src/**/*.io.test.ts',
+    'packages/*/src/**/*.api.test.ts',
   ],
-  e2e: ['src/**/*.e2e.test.ts'],
-  serverOnly: ['src/**/*.io.test.ts'],
+  e2e: ['packages/*/src/**/*.e2e.test.ts'],
+  serverOnly: ['packages/*/src/**/*.io.test.ts'],
 };
 
 const include = (p: string[]): SearchConfig => ({ include: p });
@@ -117,7 +117,10 @@ type ProjectConfig = {
 };
 
 const baseResolve = {
-  alias: { '@': resolve(__dirname, 'src') },
+  alias: {
+    '@rabbitbox/sbi': resolve(__dirname, 'packages/rabbit-sbi/src'),
+    '@rabbitbox/box': resolve(__dirname, 'packages/rabbit-box/src'),
+  },
 };
 
 const projectConfig = {
@@ -161,8 +164,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      include: ['src/**/*.ts'],
-      exclude: ['src/**/*.test.ts'],
+      include: ['packages/*/src/**/*.ts'],
+      exclude: ['packages/*/src/**/*.test.ts'],
     },
     projects: [
       // Unit tests
