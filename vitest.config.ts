@@ -92,7 +92,7 @@ type RunConfig = {
 };
 
 const runConfig = {
-  browser: (name: string): RunConfig => ({
+  browser: (): RunConfig => ({
     browser: {
       enabled: true,
       provider: playwright(),
@@ -104,9 +104,6 @@ const runConfig = {
     pool: 'forks',
   }),
 };
-
-// Suppress unused parameter warning — name reserved for future use
-void runConfig.browser.length;
 
 // ============================================================================
 // Project config
@@ -195,7 +192,7 @@ export default defineConfig({
         projectConfig.browser(),
         searchConfig.browser(searchConfig.unit()),
         timeoutConfig.unit(),
-        runConfig.browser('unit')
+        runConfig.browser()
       ),
 
       // Integration tests
@@ -225,7 +222,7 @@ export default defineConfig({
         projectConfig.browser(),
         searchConfig.browser(searchConfig.integration()),
         timeoutConfig.integration(),
-        runConfig.browser('integration')
+        runConfig.browser()
       ),
 
       // E2E tests
@@ -255,7 +252,7 @@ export default defineConfig({
         projectConfig.browser(),
         searchConfig.browser(searchConfig.e2e()),
         timeoutConfig.e2e(),
-        runConfig.browser('e2e')
+        runConfig.browser()
       ),
     ],
   },
