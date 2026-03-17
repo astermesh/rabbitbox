@@ -15,6 +15,7 @@ export class AmqpError extends Error {
 
   constructor(replyCode: number, replyText: string, classId = 0, methodId = 0) {
     super(replyText);
+    Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'AmqpError';
     this.replyCode = replyCode;
     this.replyText = replyText;
@@ -27,6 +28,7 @@ export class AmqpError extends Error {
 export class ChannelError extends AmqpError {
   constructor(replyCode: number, replyText: string, classId = 0, methodId = 0) {
     super(replyCode, replyText, classId, methodId);
+    Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'ChannelError';
   }
 }
@@ -35,6 +37,7 @@ export class ChannelError extends AmqpError {
 export class ConnectionError extends AmqpError {
   constructor(replyCode: number, replyText: string, classId = 0, methodId = 0) {
     super(replyCode, replyText, classId, methodId);
+    Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'ConnectionError';
   }
 }

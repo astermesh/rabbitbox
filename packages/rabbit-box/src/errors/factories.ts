@@ -21,6 +21,11 @@ export const channelError = {
     );
   },
 
+  /**
+   * Code 312: used inside basic.return frames for mandatory messages that
+   * cannot be routed. Real RabbitMQ never sends this as channel.close —
+   * do not throw to close a channel.
+   */
   noRoute(message: string, classId = 0, methodId = 0): ChannelError {
     return new ChannelError(
       codes.NO_ROUTE,
@@ -30,6 +35,10 @@ export const channelError = {
     );
   },
 
+  /**
+   * Code 313: immediate flag is not supported by RabbitMQ.
+   * Included for AMQP 0-9-1 spec completeness.
+   */
   noConsumers(message: string, classId = 0, methodId = 0): ChannelError {
     return new ChannelError(
       codes.NO_CONSUMERS,
