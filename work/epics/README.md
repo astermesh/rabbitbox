@@ -1,6 +1,6 @@
 # Epics
 
-- [E01: Boxing RabbitMQ](E01-boxing/README.md)
+- [E01: Box RabbitMQ](E01-box/README.md)
 
 ---
 
