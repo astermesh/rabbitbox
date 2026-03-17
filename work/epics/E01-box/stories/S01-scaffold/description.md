@@ -1,5 +1,7 @@
 # S01: Project Scaffold & Domain Model
 
+**Status:** done
+
 Set up the monorepo package structure and define the core domain types that all subsequent stories depend on. Includes AMQP error model with exact RabbitMQ error codes and messages.
 
 ## Scope
