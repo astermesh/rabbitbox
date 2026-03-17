@@ -12,3 +12,11 @@ export type {
   XDeathEntry,
   XDeathReason,
 } from './types/index.ts';
+
+export {
+  AmqpError,
+  ChannelError,
+  ConnectionError,
+} from './errors/amqp-error.ts';
+export * from './errors/reply-codes.ts';
+export { channelError, connectionError } from './errors/factories.ts';
