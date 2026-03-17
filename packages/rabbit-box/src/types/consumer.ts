@@ -1,5 +1,4 @@
-import type { BrokerMessage } from './message.ts';
-import type { DeliveredMessage } from './message.ts';
+import type { BrokerMessage, DeliveredMessage } from './message.ts';
 
 /**
  * A message held by the broker pending acknowledgment from a consumer.

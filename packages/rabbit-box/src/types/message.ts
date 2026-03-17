@@ -1,7 +1,9 @@
 import type { XDeathEntry } from './x-death-entry.ts';
 
 /**
- * All 14 AMQP 0-9-1 basic properties that can accompany a message.
+ * AMQP 0-9-1 basic properties that can accompany a message.
+ *
+ * Covers the 13 standard properties; deprecated cluster-id is omitted.
  *
  * Field names match the AMQP basic content-header properties exactly.
  */

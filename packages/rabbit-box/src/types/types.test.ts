@@ -93,7 +93,7 @@ describe('core domain types', () => {
   });
 
   describe('MessageProperties', () => {
-    it('accepts all 14 AMQP basic properties', () => {
+    it('accepts all 13 standard AMQP basic properties', () => {
       const props: MessageProperties = {
         contentType: 'application/json',
         contentEncoding: 'utf-8',
