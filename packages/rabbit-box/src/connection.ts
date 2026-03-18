@@ -1,7 +1,6 @@
 import { Channel } from './channel.ts';
 import type { BrokerMessage } from './types/message.ts';
-import { ConnectionError } from './errors/amqp-error.ts';
-import { COMMAND_INVALID } from './errors/reply-codes.ts';
+import { connectionError } from './errors/factories.ts';
 
 /** AMQP class ID for connection operations. */
 const CONNECTION_CLASS = 10;
@@ -121,9 +120,8 @@ export class Connection {
    */
   assertOpen(): void {
     if (this.state !== 'open') {
-      throw new ConnectionError(
-        COMMAND_INVALID,
-        'COMMAND_INVALID - connection is closing or closed',
+      throw connectionError.commandInvalid(
+        'connection is closing or closed',
         CONNECTION_CLASS,
         0
       );

@@ -1,7 +1,6 @@
 import type { BrokerMessage } from './types/message.ts';
 import type { UnackedMessage } from './types/consumer.ts';
-import { ChannelError } from './errors/amqp-error.ts';
-import { CHANNEL_ERROR } from './errors/reply-codes.ts';
+import { connectionError } from './errors/factories.ts';
 
 /** AMQP class/method IDs for channel operations. */
 const CHANNEL_CLASS = 20;
@@ -59,9 +58,8 @@ export class Channel {
    */
   assertOpen(): void {
     if (this.state !== 'open') {
-      throw new ChannelError(
-        CHANNEL_ERROR,
-        `CHANNEL_ERROR - channel ${this.channelNumber} already closed`,
+      throw connectionError.channelError(
+        `channel ${this.channelNumber} already closed`,
         CHANNEL_CLASS,
         CHANNEL_CLOSE
       );

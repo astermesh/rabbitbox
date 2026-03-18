@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { Channel } from './channel.ts';
 import type { ChannelDeps } from './channel.ts';
 import type { BrokerMessage } from './types/message.ts';
-import { ChannelError } from './errors/amqp-error.ts';
+import { ConnectionError } from './errors/amqp-error.ts';
 import { CHANNEL_ERROR } from './errors/reply-codes.ts';
 
 function makeMessage(body = 'test'): BrokerMessage {
@@ -78,7 +78,7 @@ describe('Channel', () => {
 
     it('throws on closed channel', () => {
       channel.close();
-      expect(() => channel.nextDeliveryTag()).toThrow(ChannelError);
+      expect(() => channel.nextDeliveryTag()).toThrow(ConnectionError);
     });
   });
 
@@ -184,7 +184,7 @@ describe('Channel', () => {
 
     it('throws on closed channel', () => {
       channel.close();
-      expect(() => channel.setFlow(false)).toThrow(ChannelError);
+      expect(() => channel.setFlow(false)).toThrow(ConnectionError);
     });
   });
 
@@ -229,19 +229,19 @@ describe('Channel', () => {
 
     it('operations throw after close', () => {
       channel.close();
-      expect(() => channel.assertOpen()).toThrow(ChannelError);
-      expect(() => channel.nextDeliveryTag()).toThrow(ChannelError);
-      expect(() => channel.setFlow(false)).toThrow(ChannelError);
+      expect(() => channel.assertOpen()).toThrow(ConnectionError);
+      expect(() => channel.nextDeliveryTag()).toThrow(ConnectionError);
+      expect(() => channel.setFlow(false)).toThrow(ConnectionError);
     });
 
-    it('error includes CHANNEL_ERROR reply code', () => {
+    it('error includes CHANNEL_ERROR reply code (connection-level per AMQP spec)', () => {
       channel.close();
       try {
         channel.assertOpen();
         expect.unreachable('should have thrown');
       } catch (err) {
-        expect(err).toBeInstanceOf(ChannelError);
-        expect((err as ChannelError).replyCode).toBe(CHANNEL_ERROR);
+        expect(err).toBeInstanceOf(ConnectionError);
+        expect((err as ConnectionError).replyCode).toBe(CHANNEL_ERROR);
       }
     });
   });
@@ -253,9 +253,9 @@ describe('Channel', () => {
       expect(() => channel.assertOpen()).not.toThrow();
     });
 
-    it('throws ChannelError when channel is closed', () => {
+    it('throws ConnectionError when channel is closed (AMQP 504)', () => {
       channel.close();
-      expect(() => channel.assertOpen()).toThrow(ChannelError);
+      expect(() => channel.assertOpen()).toThrow(ConnectionError);
     });
   });
 });
