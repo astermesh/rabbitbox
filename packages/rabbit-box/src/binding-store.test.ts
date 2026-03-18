@@ -1,22 +1,35 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { BindingStore } from './binding-store.ts';
 import { ExchangeRegistry } from './exchange-registry.ts';
-import { QueueRegistry } from './queue-registry.ts';
 import { ChannelError } from './errors/amqp-error.ts';
 
 describe('BindingStore', () => {
   let store: BindingStore;
   let exchanges: ExchangeRegistry;
-  let queues: QueueRegistry;
+
+  /** Simple set-based queue tracker (avoids importing QueueRegistry + node:crypto). */
+  const queueNames = new Set<string>();
 
   beforeEach(() => {
-    store = new BindingStore();
-    exchanges = new ExchangeRegistry({ bindingCount: (name) => store.getBindings(name).length });
-    queues = new QueueRegistry();
+    queueNames.clear();
+    exchanges = new ExchangeRegistry();
+    store = new BindingStore({
+      hasExchange: (name) => exchanges.hasExchange(name),
+      hasQueue: (name) => queueNames.has(name),
+    });
+    // Re-create ExchangeRegistry with binding count wired up
+    exchanges = new ExchangeRegistry({
+      bindingCount: (name) => store.bindingCount(name),
+    });
+    // Re-wire store to use updated registry
+    store = new BindingStore({
+      hasExchange: (name) => exchanges.hasExchange(name),
+      hasQueue: (name) => queueNames.has(name),
+    });
   });
 
   function declareQueue(name: string): void {
-    queues.declareQueue(name, {});
+    queueNames.add(name);
   }
 
   function declareExchange(name: string, type: 'direct' | 'fanout' | 'topic' | 'headers' = 'direct'): void {
@@ -122,7 +135,48 @@ describe('BindingStore', () => {
       args.level = 'error';
 
       const bindings = store.getBindings('logs');
-      expect(bindings[0].arguments).toEqual({ level: 'info' });
+      expect(bindings[0]?.arguments).toEqual({ level: 'info' });
+    });
+
+    it('throws NOT_FOUND when exchange does not exist', () => {
+      declareQueue('q1');
+
+      expect(() => store.addBinding('no-such-exchange', 'q1', 'rk', {})).toThrow(ChannelError);
+      expect(() => store.addBinding('no-such-exchange', 'q1', 'rk', {})).toThrow(/no exchange/);
+    });
+
+    it('throws NOT_FOUND when queue does not exist', () => {
+      declareExchange('logs');
+
+      expect(() => store.addBinding('logs', 'no-such-queue', 'rk', {})).toThrow(ChannelError);
+      expect(() => store.addBinding('logs', 'no-such-queue', 'rk', {})).toThrow(/no queue/);
+    });
+
+    it('validates exchange before queue — exchange error takes priority', () => {
+      // Neither exchange nor queue exist
+      expect(() => store.addBinding('no-ex', 'no-q', 'rk', {})).toThrow(/no exchange/);
+    });
+
+    it('allows binding to default exchange', () => {
+      declareQueue('q1');
+      // Default exchange '' is pre-declared
+      store.addBinding('', 'q1', 'q1', {});
+
+      expect(store.getBindings('')).toHaveLength(1);
+    });
+
+    it('allows binding to amq.* pre-declared exchanges', () => {
+      declareQueue('q1');
+
+      store.addBinding('amq.direct', 'q1', 'rk', {});
+      store.addBinding('amq.fanout', 'q1', '', {});
+      store.addBinding('amq.topic', 'q1', 'a.b', {});
+      store.addBinding('amq.headers', 'q1', '', { 'x-match': 'all' });
+
+      expect(store.getBindings('amq.direct')).toHaveLength(1);
+      expect(store.getBindings('amq.fanout')).toHaveLength(1);
+      expect(store.getBindings('amq.topic')).toHaveLength(1);
+      expect(store.getBindings('amq.headers')).toHaveLength(1);
     });
   });
 
@@ -183,7 +237,7 @@ describe('BindingStore', () => {
 
       const bindings = store.getBindings('logs');
       expect(bindings).toHaveLength(1);
-      expect(bindings[0].routingKey).toBe('error');
+      expect(bindings[0]?.routingKey).toBe('error');
     });
   });
 
@@ -248,7 +302,7 @@ describe('BindingStore', () => {
       store.addBinding('logs', 'q2', 'error', {});
 
       expect(store.getBindingsForQueue('q1')).toHaveLength(1);
-      expect(store.getBindingsForQueue('q1')[0].routingKey).toBe('info');
+      expect(store.getBindingsForQueue('q1')[0]?.routingKey).toBe('info');
     });
   });
 
@@ -295,7 +349,7 @@ describe('BindingStore', () => {
       store.removeBindingsForQueue('q1');
 
       expect(store.getBindings('logs')).toHaveLength(1);
-      expect(store.getBindings('logs')[0].queue).toBe('q2');
+      expect(store.getBindings('logs')[0]?.queue).toBe('q2');
     });
 
     it('is safe to call for queue with no bindings', () => {
@@ -356,6 +410,18 @@ describe('BindingStore', () => {
       store.addBinding('logs', 'q2', 'error', {});
 
       expect(store.bindingCount('logs')).toBe(2);
+    });
+
+    it('decreases after removal', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+      declareQueue('q2');
+
+      store.addBinding('logs', 'q1', 'info', {});
+      store.addBinding('logs', 'q2', 'error', {});
+      store.removeBinding('logs', 'q1', 'info', {});
+
+      expect(store.bindingCount('logs')).toBe(1);
     });
   });
 

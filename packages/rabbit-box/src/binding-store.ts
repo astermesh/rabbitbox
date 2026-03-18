@@ -1,4 +1,17 @@
 import type { Binding } from './types/binding.ts';
+import { channelError } from './errors/factories.ts';
+
+/** AMQP class/method IDs for queue.bind / queue.unbind. */
+const QUEUE_CLASS_ID = 50;
+const QUEUE_BIND_METHOD_ID = 20;
+
+/** Options for constructing a BindingStore. */
+export interface BindingStoreOptions {
+  /** Returns true if the named exchange exists. */
+  readonly hasExchange?: (name: string) => boolean;
+  /** Returns true if the named queue exists. */
+  readonly hasQueue?: (name: string) => boolean;
+}
 
 /**
  * Deep-equality comparison for binding arguments tables.
@@ -37,11 +50,24 @@ function bindingsMatch(a: Binding, b: Binding): boolean {
 export class BindingStore {
   /** Bindings indexed by exchange name. */
   private readonly byExchange = new Map<string, Binding[]>();
+  private readonly hasExchangeFn:
+    | ((name: string) => boolean)
+    | undefined;
+  private readonly hasQueueFn:
+    | ((name: string) => boolean)
+    | undefined;
+
+  constructor(options?: BindingStoreOptions) {
+    this.hasExchangeFn = options?.hasExchange;
+    this.hasQueueFn = options?.hasQueue;
+  }
 
   /**
    * Add a binding. Idempotent — duplicate binding is a no-op.
    * Binding identity is (exchange, queue, routingKey, arguments) with
    * arguments compared by deep equality.
+   *
+   * Validates that both exchange and queue exist (NOT_FOUND if missing).
    */
   addBinding(
     exchange: string,
@@ -49,6 +75,21 @@ export class BindingStore {
     routingKey: string,
     args: Record<string, unknown>,
   ): void {
+    if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
+      throw channelError.notFound(
+        `no exchange '${exchange}' in vhost '/'`,
+        QUEUE_CLASS_ID,
+        QUEUE_BIND_METHOD_ID
+      );
+    }
+    if (this.hasQueueFn && !this.hasQueueFn(queue)) {
+      throw channelError.notFound(
+        `no queue '${queue}' in vhost '/'`,
+        QUEUE_CLASS_ID,
+        QUEUE_BIND_METHOD_ID
+      );
+    }
+
     const binding: Binding = {
       exchange,
       queue,
