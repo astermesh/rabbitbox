@@ -1,5 +1,7 @@
 # T02: Routing Algorithms
 
+**Status:** done
+
 Implement per-type routing matchers for all four AMQP exchange types.
 
 ## Scope
