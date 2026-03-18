@@ -1,5 +1,7 @@
 # T03: Binding Management
 
+**Status:** done
+
 Implement the queue-to-exchange binding store.
 
 ## Scope
