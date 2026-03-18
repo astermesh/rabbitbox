@@ -33,3 +33,5 @@ export {
   headersMatch,
   route,
 } from './routing.ts';
+export { publish } from './publish.ts';
+export type { PublishResult, PublishOptions } from './publish.ts';
