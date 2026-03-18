@@ -22,3 +22,5 @@ export * from './errors/reply-codes.ts';
 export { channelError, connectionError } from './errors/factories.ts';
 export { ExchangeRegistry } from './exchange-registry.ts';
 export type { DeclareExchangeOptions } from './exchange-registry.ts';
+export { MessageStore } from './message-store.ts';
+export type { MessageStoreOptions } from './message-store.ts';
