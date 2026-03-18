@@ -4,6 +4,7 @@ import { channelError } from './errors/factories.ts';
 /** AMQP class/method IDs for queue.bind / queue.unbind. */
 const QUEUE_CLASS_ID = 50;
 const QUEUE_BIND_METHOD_ID = 20;
+const QUEUE_UNBIND_METHOD_ID = 50;
 
 /** Options for constructing a BindingStore. */
 export interface BindingStoreOptions {
@@ -112,6 +113,9 @@ export class BindingStore {
   /**
    * Remove a binding. Idempotent — no error if binding doesn't exist.
    * Matches by deep equality on (exchange, queue, routingKey, arguments).
+   *
+   * Validates that both exchange and queue exist (NOT_FOUND if missing),
+   * matching real RabbitMQ queue.unbind behavior.
    */
   removeBinding(
     exchange: string,
@@ -119,6 +123,21 @@ export class BindingStore {
     routingKey: string,
     args: Record<string, unknown>
   ): void {
+    if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
+      throw channelError.notFound(
+        `no exchange '${exchange}' in vhost '/'`,
+        QUEUE_CLASS_ID,
+        QUEUE_UNBIND_METHOD_ID
+      );
+    }
+    if (this.hasQueueFn && !this.hasQueueFn(queue)) {
+      throw channelError.notFound(
+        `no queue '${queue}' in vhost '/'`,
+        QUEUE_CLASS_ID,
+        QUEUE_UNBIND_METHOD_ID
+      );
+    }
+
     const list = this.byExchange.get(exchange);
     if (!list) return;
 
