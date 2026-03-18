@@ -634,7 +634,7 @@ describe('route', () => {
       );
 
       expect(result).toHaveLength(1);
-      expect(result[0]!.queue).toBe('my-queue');
+      expect(result[0]?.queue).toBe('my-queue');
     });
   });
 });
