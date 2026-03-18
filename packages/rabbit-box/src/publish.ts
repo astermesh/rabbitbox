@@ -167,7 +167,12 @@ export function publish(opts: PublishOptions): PublishResult {
     // Normal exchange: use bindings and routing
     const bindings = bindingStore.getBindings(exchangeName);
     for (const key of allRoutingKeys) {
-      const matchedBindings = route(exchange, bindings, key, properties.headers);
+      const matchedBindings = route(
+        exchange,
+        bindings,
+        key,
+        properties.headers
+      );
       for (const binding of matchedBindings) {
         targetQueues.add(binding.queue);
       }

@@ -499,74 +499,50 @@ describe('headersMatch', () => {
   describe('value type matching', () => {
     it('matches numeric values with strict equality', () => {
       expect(
-        headersMatch(
-          { priority: 5 },
-          { priority: 5, 'x-match': 'all' }
-        )
+        headersMatch({ priority: 5 }, { priority: 5, 'x-match': 'all' })
       ).toBe(true);
     });
 
     it('does not match different numeric values', () => {
       expect(
-        headersMatch(
-          { priority: 3 },
-          { priority: 5, 'x-match': 'all' }
-        )
+        headersMatch({ priority: 3 }, { priority: 5, 'x-match': 'all' })
       ).toBe(false);
     });
 
     it('does not coerce string to number', () => {
       expect(
-        headersMatch(
-          { priority: '5' },
-          { priority: 5, 'x-match': 'all' }
-        )
+        headersMatch({ priority: '5' }, { priority: 5, 'x-match': 'all' })
       ).toBe(false);
     });
 
     it('matches boolean values', () => {
       expect(
-        headersMatch(
-          { urgent: true },
-          { urgent: true, 'x-match': 'all' }
-        )
+        headersMatch({ urgent: true }, { urgent: true, 'x-match': 'all' })
       ).toBe(true);
     });
 
     it('does not match different boolean values', () => {
       expect(
-        headersMatch(
-          { urgent: false },
-          { urgent: true, 'x-match': 'all' }
-        )
+        headersMatch({ urgent: false }, { urgent: true, 'x-match': 'all' })
       ).toBe(false);
     });
 
     it('matches empty string values', () => {
-      expect(
-        headersMatch(
-          { tag: '' },
-          { tag: '', 'x-match': 'all' }
-        )
-      ).toBe(true);
+      expect(headersMatch({ tag: '' }, { tag: '', 'x-match': 'all' })).toBe(
+        true
+      );
     });
 
     it('matches null values with strict equality', () => {
-      expect(
-        headersMatch(
-          { tag: null },
-          { tag: null, 'x-match': 'all' }
-        )
-      ).toBe(true);
+      expect(headersMatch({ tag: null }, { tag: null, 'x-match': 'all' })).toBe(
+        true
+      );
     });
 
     it('null does not match undefined (void vs null)', () => {
       // Binding with null checks value equality, not key presence
       expect(
-        headersMatch(
-          { tag: 'something' },
-          { tag: null, 'x-match': 'all' }
-        )
+        headersMatch({ tag: 'something' }, { tag: null, 'x-match': 'all' })
       ).toBe(false);
     });
   });
@@ -588,10 +564,7 @@ describe('headersMatch', () => {
 
     it('single binding arg in any mode is sufficient', () => {
       expect(
-        headersMatch(
-          { a: 1, b: 2, c: 3 },
-          { c: 3, 'x-match': 'any' }
-        )
+        headersMatch({ a: 1, b: 2, c: 3 }, { c: 3, 'x-match': 'any' })
       ).toBe(true);
     });
 
@@ -619,15 +592,15 @@ describe('headersMatch', () => {
     });
 
     it('throws for empty string x-match', () => {
-      expect(() =>
-        headersMatch({ format: 'pdf' }, { 'x-match': '' })
-      ).toThrow(ChannelError);
+      expect(() => headersMatch({ format: 'pdf' }, { 'x-match': '' })).toThrow(
+        ChannelError
+      );
     });
 
     it('throws for numeric x-match', () => {
-      expect(() =>
-        headersMatch({ format: 'pdf' }, { 'x-match': 42 })
-      ).toThrow(ChannelError);
+      expect(() => headersMatch({ format: 'pdf' }, { 'x-match': 42 })).toThrow(
+        ChannelError
+      );
     });
   });
 });
