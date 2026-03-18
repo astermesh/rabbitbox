@@ -30,28 +30,58 @@ function isReservedPrefix(name: string): boolean {
   return name.startsWith('amq.');
 }
 
+/** Result of equivalence check: null if equivalent, or the mismatch details. */
+interface EquivalenceMismatch {
+  readonly field: string;
+  readonly received: string;
+  readonly current: string;
+}
+
 /**
  * Compares two exchanges for equivalence as RabbitMQ does on re-declare.
  *
- * RabbitMQ checks: type, durable, autoDelete, internal, arguments.
- * If any differ → PRECONDITION_FAILED.
+ * RabbitMQ checks: type, durable, auto_delete, internal, arguments.
+ * Returns null if equivalent, or the first mismatch found.
+ * Field names and value formatting match real RabbitMQ error messages.
  */
-function isEquivalent(existing: Exchange, type: ExchangeType, opts: DeclareExchangeOptions): boolean {
-  if (existing.type !== type) return false;
-  if (existing.durable !== (opts.durable ?? true)) return false;
-  if (existing.autoDelete !== (opts.autoDelete ?? false)) return false;
-  if (existing.internal !== (opts.internal ?? false)) return false;
+function findMismatch(
+  existing: Exchange,
+  type: ExchangeType,
+  opts: DeclareExchangeOptions,
+): EquivalenceMismatch | null {
+  if (existing.type !== type) {
+    return { field: 'type', received: `'${type}'`, current: `'${existing.type}'` };
+  }
+
+  const durable = opts.durable ?? true;
+  if (existing.durable !== durable) {
+    return { field: 'durable', received: `'${durable}'`, current: `'${existing.durable}'` };
+  }
+
+  const autoDelete = opts.autoDelete ?? false;
+  if (existing.autoDelete !== autoDelete) {
+    return { field: 'auto_delete', received: `'${autoDelete}'`, current: `'${existing.autoDelete}'` };
+  }
+
+  const internal = opts.internal ?? false;
+  if (existing.internal !== internal) {
+    return { field: 'internal', received: `'${internal}'`, current: `'${existing.internal}'` };
+  }
 
   const newArgs = opts.arguments ?? {};
   const existingArgs = existing.arguments;
   const existingKeys = Object.keys(existingArgs);
   const newKeys = Object.keys(newArgs);
-  if (existingKeys.length !== newKeys.length) return false;
+  if (existingKeys.length !== newKeys.length) {
+    return { field: 'arguments', received: 'inequivalent arguments', current: 'current arguments' };
+  }
   for (const key of existingKeys) {
-    if (existingArgs[key] !== newArgs[key]) return false;
+    if (existingArgs[key] !== newArgs[key]) {
+      return { field: 'arguments', received: 'inequivalent arguments', current: 'current arguments' };
+    }
   }
 
-  return true;
+  return null;
 }
 
 /**
@@ -73,13 +103,13 @@ export class ExchangeRegistry {
     const existing = this.exchanges.get(name);
 
     if (existing) {
-      if (isEquivalent(existing, type, opts)) {
+      const mismatch = findMismatch(existing, type, opts);
+      if (!mismatch) {
         return existing;
       }
 
-      // RabbitMQ: re-declaring amq.* with wrong type gives PRECONDITION_FAILED (not ACCESS_REFUSED)
       throw channelError.preconditionFailed(
-        `inequivalent arg 'type' for exchange '${name}' in vhost '/': received '${type}' but current is '${existing.type}'`,
+        `inequivalent arg '${mismatch.field}' for exchange '${name}' in vhost '/': received ${mismatch.received} but current is ${mismatch.current}`,
         EXCHANGE_CLASS_ID,
         EXCHANGE_DECLARE_METHOD_ID,
       );
@@ -122,12 +152,11 @@ export class ExchangeRegistry {
     }
 
     const existing = this.exchanges.get(name);
+
+    // RabbitMQ (since 3.0) silently returns delete-ok for non-existent exchanges,
+    // deviating from the AMQP 0-9-1 spec which requires NOT_FOUND.
     if (!existing) {
-      throw channelError.notFound(
-        `no exchange '${name}' in vhost '/'`,
-        EXCHANGE_CLASS_ID,
-        EXCHANGE_DELETE_METHOD_ID,
-      );
+      return;
     }
 
     if (ifUnused) {

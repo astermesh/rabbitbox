@@ -116,28 +116,52 @@ describe('ExchangeRegistry', () => {
       }
     });
 
-    it('throws PRECONDITION_FAILED on durable mismatch', () => {
+    it('throws PRECONDITION_FAILED on durable mismatch with correct field name', () => {
       registry.declareExchange('logs', 'fanout', { durable: true });
 
-      expect(() => {
+      try {
         registry.declareExchange('logs', 'fanout', { durable: false });
-      }).toThrow(ChannelError);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        const e = err as ChannelError;
+        expect(e.replyCode).toBe(PRECONDITION_FAILED);
+        expect(e.replyText).toBe(
+          "PRECONDITION_FAILED - inequivalent arg 'durable' for exchange 'logs' in vhost '/': received 'false' but current is 'true'",
+        );
+      }
     });
 
-    it('throws PRECONDITION_FAILED on autoDelete mismatch', () => {
+    it('throws PRECONDITION_FAILED on autoDelete mismatch with auto_delete field name', () => {
       registry.declareExchange('logs', 'fanout', { autoDelete: false });
 
-      expect(() => {
+      try {
         registry.declareExchange('logs', 'fanout', { autoDelete: true });
-      }).toThrow(ChannelError);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        const e = err as ChannelError;
+        expect(e.replyCode).toBe(PRECONDITION_FAILED);
+        expect(e.replyText).toBe(
+          "PRECONDITION_FAILED - inequivalent arg 'auto_delete' for exchange 'logs' in vhost '/': received 'true' but current is 'false'",
+        );
+      }
     });
 
-    it('throws PRECONDITION_FAILED on internal mismatch', () => {
+    it('throws PRECONDITION_FAILED on internal mismatch with correct field name', () => {
       registry.declareExchange('logs', 'fanout', { internal: false });
 
-      expect(() => {
+      try {
         registry.declareExchange('logs', 'fanout', { internal: true });
-      }).toThrow(ChannelError);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        const e = err as ChannelError;
+        expect(e.replyCode).toBe(PRECONDITION_FAILED);
+        expect(e.replyText).toBe(
+          "PRECONDITION_FAILED - inequivalent arg 'internal' for exchange 'logs' in vhost '/': received 'true' but current is 'false'",
+        );
+      }
     });
 
     it('throws PRECONDITION_FAILED on arguments mismatch', () => {
@@ -145,11 +169,17 @@ describe('ExchangeRegistry', () => {
         arguments: { 'x-foo': 'bar' },
       });
 
-      expect(() => {
+      try {
         registry.declareExchange('logs', 'fanout', {
           arguments: { 'x-foo': 'baz' },
         });
-      }).toThrow(ChannelError);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        const e = err as ChannelError;
+        expect(e.replyCode).toBe(PRECONDITION_FAILED);
+        expect(e.replyText).toContain("inequivalent arg 'arguments'");
+      }
     });
 
     it('throws PRECONDITION_FAILED when re-declaring default exchange with wrong type', () => {
@@ -189,20 +219,8 @@ describe('ExchangeRegistry', () => {
       expect(registry.hasExchange('logs')).toBe(false);
     });
 
-    it('throws NOT_FOUND when deleting non-existent exchange', () => {
-      try {
-        registry.deleteExchange('nope');
-        expect.unreachable('should have thrown');
-      } catch (err) {
-        expect(err).toBeInstanceOf(ChannelError);
-        const e = err as ChannelError;
-        expect(e.replyCode).toBe(NOT_FOUND);
-        expect(e.replyText).toBe(
-          "NOT_FOUND - no exchange 'nope' in vhost '/'",
-        );
-        expect(e.classId).toBe(EXCHANGE_CLASS_ID);
-        expect(e.methodId).toBe(EXCHANGE_DELETE_METHOD_ID);
-      }
+    it('silently succeeds when deleting non-existent exchange (RabbitMQ 3.0+ behavior)', () => {
+      expect(() => registry.deleteExchange('nope')).not.toThrow();
     });
 
     it('throws ACCESS_REFUSED when deleting default exchange ""', () => {
