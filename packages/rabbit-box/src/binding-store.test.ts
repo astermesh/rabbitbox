@@ -32,7 +32,10 @@ describe('BindingStore', () => {
     queueNames.add(name);
   }
 
-  function declareExchange(name: string, type: 'direct' | 'fanout' | 'topic' | 'headers' = 'direct'): void {
+  function declareExchange(
+    name: string,
+    type: 'direct' | 'fanout' | 'topic' | 'headers' = 'direct'
+  ): void {
     exchanges.declareExchange(name, type);
   }
 
@@ -141,20 +144,30 @@ describe('BindingStore', () => {
     it('throws NOT_FOUND when exchange does not exist', () => {
       declareQueue('q1');
 
-      expect(() => store.addBinding('no-such-exchange', 'q1', 'rk', {})).toThrow(ChannelError);
-      expect(() => store.addBinding('no-such-exchange', 'q1', 'rk', {})).toThrow(/no exchange/);
+      expect(() =>
+        store.addBinding('no-such-exchange', 'q1', 'rk', {})
+      ).toThrow(ChannelError);
+      expect(() =>
+        store.addBinding('no-such-exchange', 'q1', 'rk', {})
+      ).toThrow(/no exchange/);
     });
 
     it('throws NOT_FOUND when queue does not exist', () => {
       declareExchange('logs');
 
-      expect(() => store.addBinding('logs', 'no-such-queue', 'rk', {})).toThrow(ChannelError);
-      expect(() => store.addBinding('logs', 'no-such-queue', 'rk', {})).toThrow(/no queue/);
+      expect(() => store.addBinding('logs', 'no-such-queue', 'rk', {})).toThrow(
+        ChannelError
+      );
+      expect(() => store.addBinding('logs', 'no-such-queue', 'rk', {})).toThrow(
+        /no queue/
+      );
     });
 
     it('validates exchange before queue — exchange error takes priority', () => {
       // Neither exchange nor queue exist
-      expect(() => store.addBinding('no-ex', 'no-q', 'rk', {})).toThrow(/no exchange/);
+      expect(() => store.addBinding('no-ex', 'no-q', 'rk', {})).toThrow(
+        /no exchange/
+      );
     });
 
     it('allows binding to default exchange', () => {
@@ -202,7 +215,10 @@ describe('BindingStore', () => {
       declareQueue('q1');
 
       store.addBinding('logs', 'q1', '', { 'x-match': 'all', level: 'info' });
-      store.removeBinding('logs', 'q1', '', { 'x-match': 'all', level: 'info' });
+      store.removeBinding('logs', 'q1', '', {
+        'x-match': 'all',
+        level: 'info',
+      });
 
       expect(store.getBindings('logs')).toHaveLength(0);
     });
@@ -290,7 +306,10 @@ describe('BindingStore', () => {
 
       const bindings = store.getBindingsForQueue('q1');
       expect(bindings).toHaveLength(2);
-      expect(bindings.map((b) => b.exchange).sort()).toEqual(['events', 'logs']);
+      expect(bindings.map((b) => b.exchange).sort()).toEqual([
+        'events',
+        'logs',
+      ]);
     });
 
     it('does not return bindings for other queues', () => {
@@ -438,7 +457,9 @@ describe('BindingStore', () => {
       declareQueue('q1');
       store.addBinding('logs', 'q1', 'info', {});
 
-      expect(() => exchanges.deleteExchange('logs', true)).toThrow(ChannelError);
+      expect(() => exchanges.deleteExchange('logs', true)).toThrow(
+        ChannelError
+      );
     });
   });
 });

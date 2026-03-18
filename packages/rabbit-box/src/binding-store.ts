@@ -16,7 +16,10 @@ export interface BindingStoreOptions {
 /**
  * Deep-equality comparison for binding arguments tables.
  */
-function argsEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+function argsEqual(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+): boolean {
   const keysA = Object.keys(a);
   const keysB = Object.keys(b);
   if (keysA.length !== keysB.length) return false;
@@ -50,12 +53,8 @@ function bindingsMatch(a: Binding, b: Binding): boolean {
 export class BindingStore {
   /** Bindings indexed by exchange name. */
   private readonly byExchange = new Map<string, Binding[]>();
-  private readonly hasExchangeFn:
-    | ((name: string) => boolean)
-    | undefined;
-  private readonly hasQueueFn:
-    | ((name: string) => boolean)
-    | undefined;
+  private readonly hasExchangeFn: ((name: string) => boolean) | undefined;
+  private readonly hasQueueFn: ((name: string) => boolean) | undefined;
 
   constructor(options?: BindingStoreOptions) {
     this.hasExchangeFn = options?.hasExchange;
@@ -73,7 +72,7 @@ export class BindingStore {
     exchange: string,
     queue: string,
     routingKey: string,
-    args: Record<string, unknown>,
+    args: Record<string, unknown>
   ): void {
     if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
       throw channelError.notFound(
@@ -118,7 +117,7 @@ export class BindingStore {
     exchange: string,
     queue: string,
     routingKey: string,
-    args: Record<string, unknown>,
+    args: Record<string, unknown>
   ): void {
     const list = this.byExchange.get(exchange);
     if (!list) return;
