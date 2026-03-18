@@ -24,3 +24,10 @@ export { ExchangeRegistry } from './exchange-registry.ts';
 export type { DeclareExchangeOptions } from './exchange-registry.ts';
 export { MessageStore } from './message-store.ts';
 export type { MessageStoreOptions } from './message-store.ts';
+export {
+  directMatch,
+  fanoutMatch,
+  topicMatch,
+  headersMatch,
+  route,
+} from './routing.ts';

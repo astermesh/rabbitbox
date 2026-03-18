@@ -64,9 +64,13 @@ function buildQueue(name: string, opts: DeclareQueueOptions): Queue {
     maxLengthBytes: args['x-max-length-bytes'] as number | undefined,
     overflowBehavior: args['x-overflow'] as OverflowBehavior | undefined,
     deadLetterExchange: args['x-dead-letter-exchange'] as string | undefined,
-    deadLetterRoutingKey: args['x-dead-letter-routing-key'] as string | undefined,
+    deadLetterRoutingKey: args['x-dead-letter-routing-key'] as
+      | string
+      | undefined,
     maxPriority: args['x-max-priority'] as number | undefined,
-    singleActiveConsumer: args['x-single-active-consumer'] as boolean | undefined,
+    singleActiveConsumer: args['x-single-active-consumer'] as
+      | boolean
+      | undefined,
   };
 }
 
@@ -103,7 +107,10 @@ export class QueueRegistry {
     // Server-generated name for empty string
     if (name === '') {
       const generated = this.generateName();
-      const queue = buildQueue(generated, { ...opts, exclusive: opts.exclusive ?? false });
+      const queue = buildQueue(generated, {
+        ...opts,
+        exclusive: opts.exclusive ?? false,
+      });
       const entry: QueueEntry = {
         queue,
         ownerConnection: connectionId,
@@ -127,7 +134,10 @@ export class QueueRegistry {
 
     if (existing) {
       // Exclusive queue — check ownership first (takes priority over precondition checks)
-      if (existing.queue.exclusive && existing.ownerConnection !== connectionId) {
+      if (
+        existing.queue.exclusive &&
+        existing.ownerConnection !== connectionId
+      ) {
         throw channelError.resourceLocked(
           `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
           QUEUE_CLASS,
