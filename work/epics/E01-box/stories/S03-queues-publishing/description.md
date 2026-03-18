@@ -1,5 +1,7 @@
 # S03: Queues & Publishing Pipeline
 
+**Status:** done
+
 Implement queue storage, message lifecycle, and the full publish-to-consume routing pipeline.
 
 ## Scope

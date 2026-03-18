@@ -1,5 +1,7 @@
 # T03: Publish Pipeline
 
+**Status:** done
+
 Implement the full publish flow from exchange to consumer dispatch trigger.
 
 ## Scope
