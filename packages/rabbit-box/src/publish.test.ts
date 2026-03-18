@@ -186,7 +186,7 @@ describe('publish', () => {
       expect(ctx.onReturn).toHaveBeenCalledOnce();
       const returnCall = assertDefined(ctx.onReturn.mock.calls[0]);
       expect(returnCall[0]).toBe(312);
-      expect(returnCall[1]).toContain('NO_ROUTE');
+      expect(returnCall[1]).toBe('NO_ROUTE');
     });
   });
 
@@ -316,7 +316,7 @@ describe('publish', () => {
         returnedProps,
       ] = assertDefined(ctx.onReturn.mock.calls[0]);
       expect(replyCode).toBe(312);
-      expect(replyText).toContain('NO_ROUTE');
+      expect(replyText).toBe('NO_ROUTE');
       expect(returnedExchange).toBe('my-direct');
       expect(returnedRk).toBe('unmatched-key');
       expect(returnedBody).toEqual(body('important'));
@@ -335,6 +335,27 @@ describe('publish', () => {
 
       expect(result.routed).toBe(false);
       expect(ctx.onReturn).not.toHaveBeenCalled();
+    });
+
+    it('basic.return includes original properties with BCC header intact', () => {
+      ctx.exchanges.declareExchange('my-direct', 'direct');
+
+      const result = doPublish(
+        ctx,
+        'my-direct',
+        'unmatched-key',
+        body('hello'),
+        { headers: { BCC: ['some-key'], 'x-custom': 'val' } },
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(false);
+      expect(ctx.onReturn).toHaveBeenCalledOnce();
+      const [, , , , , returnedProps] = assertDefined(
+        ctx.onReturn.mock.calls[0]
+      );
+      expect(returnedProps.headers?.['BCC']).toEqual(['some-key']);
+      expect(returnedProps.headers?.['x-custom']).toBe('val');
     });
 
     it('does not emit basic.return when mandatory=true but message was routed', () => {
@@ -477,6 +498,32 @@ describe('publish', () => {
 
       expect(result.routed).toBe(true);
       expect(ctx.getStore('q-cc').count()).toBe(1);
+    });
+
+    it('routes using CC keys on the default exchange', () => {
+      ctx.queues.declareQueue('q-main', {});
+      ctx.queues.declareQueue('q-cc', {});
+
+      const result = doPublish(ctx, '', 'q-main', body('hello'), {
+        headers: { CC: ['q-cc'] },
+      });
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-main').count()).toBe(1);
+      expect(ctx.getStore('q-cc').count()).toBe(1);
+    });
+
+    it('routes using BCC keys on the default exchange', () => {
+      ctx.queues.declareQueue('q-main', {});
+      ctx.queues.declareQueue('q-bcc', {});
+
+      const result = doPublish(ctx, '', 'q-main', body('hello'), {
+        headers: { BCC: ['q-bcc'] },
+      });
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-main').count()).toBe(1);
+      expect(ctx.getStore('q-bcc').count()).toBe(1);
     });
 
     it('deduplicates queues across main routing and CC/BCC routing', () => {

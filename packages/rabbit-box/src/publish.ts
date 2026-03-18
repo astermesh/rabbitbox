@@ -150,47 +150,24 @@ export function publish(opts: PublishOptions): PublishResult {
   // Default exchange: route to queue named by routingKey (implicit binding)
   const targetQueues = new Set<string>();
 
+  // 5. Process CC/BCC headers for additional routing keys
+  const ccKeys = extractSenderSelectedKeys(properties.headers, 'CC');
+  const bccKeys = extractSenderSelectedKeys(properties.headers, 'BCC');
+  const allRoutingKeys = [routingKey, ...ccKeys, ...bccKeys];
+
   if (exchangeName === '') {
-    // Default exchange: route directly to queue named by routingKey
-    const queue = queueRegistry.getQueue(routingKey);
-    if (queue) {
-      targetQueues.add(routingKey);
+    // Default exchange: each routing key is a queue name
+    for (const key of allRoutingKeys) {
+      const queue = queueRegistry.getQueue(key);
+      if (queue) {
+        targetQueues.add(key);
+      }
     }
   } else {
     // Normal exchange: use bindings and routing
     const bindings = bindingStore.getBindings(exchangeName);
-    const matchedBindings = route(
-      exchange,
-      bindings,
-      routingKey,
-      properties.headers
-    );
-
-    for (const binding of matchedBindings) {
-      targetQueues.add(binding.queue);
-    }
-  }
-
-  // 5. Process CC/BCC headers for additional routing
-  const ccKeys = extractSenderSelectedKeys(properties.headers, 'CC');
-  const bccKeys = extractSenderSelectedKeys(properties.headers, 'BCC');
-  const additionalKeys = [...ccKeys, ...bccKeys];
-
-  for (const additionalKey of additionalKeys) {
-    if (exchangeName === '') {
-      // Default exchange: CC/BCC key is a queue name
-      const queue = queueRegistry.getQueue(additionalKey);
-      if (queue) {
-        targetQueues.add(additionalKey);
-      }
-    } else {
-      const bindings = bindingStore.getBindings(exchangeName);
-      const matchedBindings = route(
-        exchange,
-        bindings,
-        additionalKey,
-        properties.headers
-      );
+    for (const key of allRoutingKeys) {
+      const matchedBindings = route(exchange, bindings, key, properties.headers);
       for (const binding of matchedBindings) {
         targetQueues.add(binding.queue);
       }
@@ -211,7 +188,7 @@ export function publish(opts: PublishOptions): PublishResult {
       mandatory,
       immediate,
       deliveryCount: 0,
-      enqueuedAt: 0,
+      enqueuedAt: Date.now(),
       priority: cleanProperties.priority ?? 0,
     };
     store.enqueue(message);
@@ -223,7 +200,7 @@ export function publish(opts: PublishOptions): PublishResult {
   if (!routed && mandatory) {
     onReturn(
       312, // NO_ROUTE
-      'NO_ROUTE - no route for message',
+      'NO_ROUTE',
       exchangeName,
       routingKey,
       body,
