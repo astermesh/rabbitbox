@@ -193,11 +193,23 @@ export class QueueRegistry {
     return { queue: name, messageCount: 0, consumerCount: 0 };
   }
 
-  deleteQueue(name: string, opts?: DeleteQueueOptions): QueueDeleteOk {
+  deleteQueue(
+    name: string,
+    opts?: DeleteQueueOptions,
+    connectionId?: string
+  ): QueueDeleteOk {
     const entry = this.queues.get(name);
     if (!entry) {
       throw channelError.notFound(
         `no queue '${name}' in vhost '/'`,
+        QUEUE_CLASS,
+        QUEUE_DELETE
+      );
+    }
+
+    if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
+      throw channelError.resourceLocked(
+        `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
         QUEUE_CLASS,
         QUEUE_DELETE
       );
@@ -249,11 +261,19 @@ export class QueueRegistry {
     };
   }
 
-  purgeQueue(name: string): QueueDeleteOk {
+  purgeQueue(name: string, connectionId?: string): QueueDeleteOk {
     const entry = this.queues.get(name);
     if (!entry) {
       throw channelError.notFound(
         `no queue '${name}' in vhost '/'`,
+        QUEUE_CLASS,
+        QUEUE_PURGE
+      );
+    }
+
+    if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
+      throw channelError.resourceLocked(
+        `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
         QUEUE_CLASS,
         QUEUE_PURGE
       );

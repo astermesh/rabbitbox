@@ -333,6 +333,30 @@ describe('deleteQueue', () => {
     expect(result).toEqual({ messageCount: 0 });
   });
 
+  it('throws RESOURCE_LOCKED when non-owner deletes exclusive queue', () => {
+    const reg = createRegistry();
+    reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
+    expect(() => reg.deleteQueue('exclusive-q', {}, 'conn-2')).toThrow(ChannelError);
+    try {
+      reg.deleteQueue('exclusive-q', {}, 'conn-2');
+    } catch (err) {
+      const e = err as ChannelError;
+      expect(e.replyCode).toBe(RESOURCE_LOCKED);
+      expect(e.replyText).toBe(
+        "RESOURCE_LOCKED - cannot obtain exclusive access to locked queue 'exclusive-q' in vhost '/'"
+      );
+      expect(e.classId).toBe(QUEUE_CLASS);
+      expect(e.methodId).toBe(QUEUE_DELETE);
+    }
+  });
+
+  it('allows owner to delete exclusive queue', () => {
+    const reg = createRegistry();
+    reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
+    const result = reg.deleteQueue('exclusive-q', {}, 'conn-1');
+    expect(result).toEqual({ messageCount: 0 });
+  });
+
   it('checks both ifUnused and ifEmpty together', () => {
     const reg = createRegistry();
     reg.declareQueue('q1', {});
@@ -445,6 +469,31 @@ describe('purgeQueue', () => {
       expect(e.classId).toBe(QUEUE_CLASS);
       expect(e.methodId).toBe(QUEUE_PURGE);
     }
+  });
+
+  it('throws RESOURCE_LOCKED when non-owner purges exclusive queue', () => {
+    const reg = createRegistry();
+    reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
+    expect(() => reg.purgeQueue('exclusive-q', 'conn-2')).toThrow(ChannelError);
+    try {
+      reg.purgeQueue('exclusive-q', 'conn-2');
+    } catch (err) {
+      const e = err as ChannelError;
+      expect(e.replyCode).toBe(RESOURCE_LOCKED);
+      expect(e.replyText).toBe(
+        "RESOURCE_LOCKED - cannot obtain exclusive access to locked queue 'exclusive-q' in vhost '/'"
+      );
+      expect(e.classId).toBe(QUEUE_CLASS);
+      expect(e.methodId).toBe(QUEUE_PURGE);
+    }
+  });
+
+  it('allows owner to purge exclusive queue', () => {
+    const reg = createRegistry();
+    reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
+    reg.setMessageCount('exclusive-q', 10);
+    const result = reg.purgeQueue('exclusive-q', 'conn-1');
+    expect(result).toEqual({ messageCount: 10 });
   });
 });
 
