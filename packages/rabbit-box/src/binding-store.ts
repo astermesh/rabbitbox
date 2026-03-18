@@ -15,21 +15,38 @@ export interface BindingStoreOptions {
 }
 
 /**
+ * Recursive deep-equality comparison for AMQP field-table values.
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== 'object' || a === null || b === null) return false;
+
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEqual(v, (b as unknown[])[i]));
+  }
+  if (Array.isArray(b)) return false;
+
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const keysA = Object.keys(ra);
+  const keysB = Object.keys(rb);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every(
+    (k) =>
+      Object.prototype.hasOwnProperty.call(rb, k) && deepEqual(ra[k], rb[k])
+  );
+}
+
+/**
  * Deep-equality comparison for binding arguments tables.
  */
 function argsEqual(
   a: Record<string, unknown>,
   b: Record<string, unknown>
 ): boolean {
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (a[key] !== b[key]) {
-      if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false;
-    }
-  }
-  return true;
+  return deepEqual(a, b);
 }
 
 /**

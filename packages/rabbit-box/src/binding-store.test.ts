@@ -129,6 +129,36 @@ describe('BindingStore', () => {
       expect(store.getBindings('logs')).toHaveLength(2);
     });
 
+    it('is idempotent regardless of argument key insertion order', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+
+      store.addBinding('logs', 'q1', '', { x: 1, y: 2 });
+      store.addBinding('logs', 'q1', '', { y: 2, x: 1 });
+
+      expect(store.getBindings('logs')).toHaveLength(1);
+    });
+
+    it('is idempotent with nested object arguments', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+
+      store.addBinding('logs', 'q1', '', { headers: { env: 'prod' } });
+      store.addBinding('logs', 'q1', '', { headers: { env: 'prod' } });
+
+      expect(store.getBindings('logs')).toHaveLength(1);
+    });
+
+    it('treats arguments with different keys but same count as different', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+
+      store.addBinding('logs', 'q1', 'rk', { a: 1 });
+      store.addBinding('logs', 'q1', 'rk', { b: 1 });
+
+      expect(store.getBindings('logs')).toHaveLength(2);
+    });
+
     it('stores a defensive copy of arguments', () => {
       declareExchange('logs');
       declareQueue('q1');
