@@ -232,6 +232,54 @@ describe('topicMatch', () => {
     it('# matches dot-only routing key', () => {
       expect(topicMatch('.', '#')).toBe(true);
     });
+
+    it('#.# matches everything like single #', () => {
+      expect(topicMatch('', '#.#')).toBe(true);
+      expect(topicMatch('a', '#.#')).toBe(true);
+      expect(topicMatch('a.b.c', '#.#')).toBe(true);
+    });
+
+    it('single * matches exactly one word', () => {
+      expect(topicMatch('order', '*')).toBe(true);
+      expect(topicMatch('a.b', '*')).toBe(false);
+      expect(topicMatch('', '*')).toBe(false);
+    });
+
+    it('#.*.# matches any key with at least one word', () => {
+      expect(topicMatch('a', '#.*.#')).toBe(true);
+      expect(topicMatch('a.b.c', '#.*.#')).toBe(true);
+      expect(topicMatch('', '#.*.#')).toBe(false);
+    });
+
+    it('*.*.# requires at least two words', () => {
+      expect(topicMatch('a.b', '*.*.#')).toBe(true);
+      expect(topicMatch('a.b.c.d', '*.*.#')).toBe(true);
+      expect(topicMatch('a', '*.*.#')).toBe(false);
+    });
+
+    it('#.*.* requires at least two words', () => {
+      expect(topicMatch('a.b', '#.*.*')).toBe(true);
+      expect(topicMatch('a.b.c.d', '#.*.*')).toBe(true);
+      expect(topicMatch('a', '#.*.*')).toBe(false);
+    });
+
+    it('consecutive hashes #.#.# match like single #', () => {
+      expect(topicMatch('', '#.#.#')).toBe(true);
+      expect(topicMatch('a', '#.#.#')).toBe(true);
+      expect(topicMatch('a.b.c.d.e', '#.#.#')).toBe(true);
+    });
+
+    it('pattern with literal word between two hashes', () => {
+      expect(topicMatch('x', '#.x.#')).toBe(true);
+      expect(topicMatch('a.x.b', '#.x.#')).toBe(true);
+      expect(topicMatch('a.b.c', '#.x.#')).toBe(false);
+    });
+
+    it('deeply nested pattern *.#.*.#.*', () => {
+      expect(topicMatch('a.b.c', '*.#.*.#.*')).toBe(true);
+      expect(topicMatch('a.x.y.z.b.c', '*.#.*.#.*')).toBe(true);
+      expect(topicMatch('a.b', '*.#.*.#.*')).toBe(false);
+    });
   });
 });
 
@@ -446,6 +494,86 @@ describe('headersMatch', () => {
     });
   });
 
+  // ── Numeric and boolean values ────────────────────────────────
+
+  describe('value type matching', () => {
+    it('matches numeric values with strict equality', () => {
+      expect(
+        headersMatch({ priority: 5 }, { priority: 5, 'x-match': 'all' })
+      ).toBe(true);
+    });
+
+    it('does not match different numeric values', () => {
+      expect(
+        headersMatch({ priority: 3 }, { priority: 5, 'x-match': 'all' })
+      ).toBe(false);
+    });
+
+    it('does not coerce string to number', () => {
+      expect(
+        headersMatch({ priority: '5' }, { priority: 5, 'x-match': 'all' })
+      ).toBe(false);
+    });
+
+    it('matches boolean values', () => {
+      expect(
+        headersMatch({ urgent: true }, { urgent: true, 'x-match': 'all' })
+      ).toBe(true);
+    });
+
+    it('does not match different boolean values', () => {
+      expect(
+        headersMatch({ urgent: false }, { urgent: true, 'x-match': 'all' })
+      ).toBe(false);
+    });
+
+    it('matches empty string values', () => {
+      expect(headersMatch({ tag: '' }, { tag: '', 'x-match': 'all' })).toBe(
+        true
+      );
+    });
+
+    it('matches null values with strict equality', () => {
+      expect(headersMatch({ tag: null }, { tag: null, 'x-match': 'all' })).toBe(
+        true
+      );
+    });
+
+    it('null does not match undefined (void vs null)', () => {
+      // Binding with null checks value equality, not key presence
+      expect(
+        headersMatch({ tag: 'something' }, { tag: null, 'x-match': 'all' })
+      ).toBe(false);
+    });
+  });
+
+  // ── Edge cases with no binding args ──────────────────────────
+
+  describe('edge cases', () => {
+    it('completely empty binding args defaults to all and matches everything', () => {
+      expect(headersMatch({ any: 'thing' }, {})).toBe(true);
+    });
+
+    it('completely empty binding args with empty message headers', () => {
+      expect(headersMatch({}, {})).toBe(true);
+    });
+
+    it('any mode with no non-x args does not match', () => {
+      expect(headersMatch({}, { 'x-match': 'any' })).toBe(false);
+    });
+
+    it('single binding arg in any mode is sufficient', () => {
+      expect(
+        headersMatch({ a: 1, b: 2, c: 3 }, { c: 3, 'x-match': 'any' })
+      ).toBe(true);
+    });
+
+    it('headers match does not use messageHeaders when route passes undefined', () => {
+      // route() passes {} when messageHeaders is undefined
+      expect(headersMatch({}, { 'x-match': 'all' })).toBe(true);
+    });
+  });
+
   // ── Invalid x-match ────────────────────────────────────────────
 
   describe('invalid x-match value', () => {
@@ -461,6 +589,18 @@ describe('headersMatch', () => {
           'expected all, any, all-with-x, or any-with-x'
         );
       }
+    });
+
+    it('throws for empty string x-match', () => {
+      expect(() => headersMatch({ format: 'pdf' }, { 'x-match': '' })).toThrow(
+        ChannelError
+      );
+    });
+
+    it('throws for numeric x-match', () => {
+      expect(() => headersMatch({ format: 'pdf' }, { 'x-match': 42 })).toThrow(
+        ChannelError
+      );
     });
   });
 });
@@ -631,6 +771,74 @@ describe('route', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]?.queue).toBe('my-queue');
+    });
+  });
+
+  describe('multiple bindings to same queue', () => {
+    it('returns duplicate bindings when same queue bound with different keys', () => {
+      const bindings = [
+        makeBinding('amq.direct', 'q1', 'key-a'),
+        makeBinding('amq.direct', 'q1', 'key-b'),
+      ];
+
+      const resultA = route(
+        exchangeRegistry.checkExchange('amq.direct'),
+        bindings,
+        'key-a'
+      );
+      expect(resultA).toHaveLength(1);
+      expect(resultA[0]?.routingKey).toBe('key-a');
+
+      const resultB = route(
+        exchangeRegistry.checkExchange('amq.direct'),
+        bindings,
+        'key-b'
+      );
+      expect(resultB).toHaveLength(1);
+      expect(resultB[0]?.routingKey).toBe('key-b');
+    });
+  });
+
+  describe('empty bindings array', () => {
+    it('returns empty for direct exchange with no bindings', () => {
+      expect(
+        route(exchangeRegistry.checkExchange('amq.direct'), [], 'key')
+      ).toEqual([]);
+    });
+
+    it('returns empty for topic exchange with no bindings', () => {
+      expect(
+        route(exchangeRegistry.checkExchange('amq.topic'), [], 'key')
+      ).toEqual([]);
+    });
+
+    it('returns empty for headers exchange with no bindings', () => {
+      expect(
+        route(exchangeRegistry.checkExchange('amq.headers'), [], '', {})
+      ).toEqual([]);
+    });
+
+    it('returns empty for fanout exchange with no bindings', () => {
+      expect(
+        route(exchangeRegistry.checkExchange('amq.fanout'), [], 'key')
+      ).toEqual([]);
+    });
+  });
+
+  describe('headers routing with undefined messageHeaders', () => {
+    it('uses empty object when messageHeaders is omitted', () => {
+      const bindings = [
+        makeBinding('amq.headers', 'q1', '', { 'x-match': 'all' }),
+      ];
+
+      // No messageHeaders → uses {} → all mode with no comparison keys → match
+      const result = route(
+        exchangeRegistry.checkExchange('amq.headers'),
+        bindings,
+        ''
+      );
+
+      expect(result).toHaveLength(1);
     });
   });
 });
