@@ -76,7 +76,7 @@ export class MessageStore {
     const index =
       position === undefined || position === 'head'
         ? 0
-        : Math.min(position, this.messages.length);
+        : Math.max(0, Math.min(position, this.messages.length));
 
     this.messages.splice(index, 0, message);
     this.totalByteSize += message.body.byteLength;

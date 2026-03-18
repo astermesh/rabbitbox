@@ -407,6 +407,29 @@ describe('MessageStore', () => {
       expect(assertDefined(store.dequeue()).routingKey).toBe('c');
     });
 
+    it('inserts at head when position is 0 (numeric)', () => {
+      const store = new MessageStore();
+      store.enqueue(makeMessage({ routingKey: 'first' }));
+      store.enqueue(makeMessage({ routingKey: 'second' }));
+
+      store.requeue(makeMessage({ routingKey: 'requeued' }), 0);
+
+      expect(assertDefined(store.peek()).routingKey).toBe('requeued');
+      expect(store.count()).toBe(3);
+    });
+
+    it('clamps negative position to zero', () => {
+      const store = new MessageStore();
+      store.enqueue(makeMessage({ routingKey: 'first' }));
+      store.enqueue(makeMessage({ routingKey: 'second' }));
+
+      store.requeue(makeMessage({ routingKey: 'requeued' }), -5);
+
+      // Negative position should be clamped to 0 (head)
+      expect(assertDefined(store.peek()).routingKey).toBe('requeued');
+      expect(store.count()).toBe(3);
+    });
+
     it('clamps position to store length', () => {
       const store = new MessageStore();
       store.enqueue(makeMessage({ routingKey: 'a' }));
