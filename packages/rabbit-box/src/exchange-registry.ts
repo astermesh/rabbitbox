@@ -24,7 +24,9 @@ const DEFAULT_EXCHANGE_DEFS: readonly { name: string; type: ExchangeType }[] = [
   { name: 'amq.match', type: 'headers' },
 ];
 
-const DEFAULT_EXCHANGE_NAMES = new Set(DEFAULT_EXCHANGE_DEFS.map((d) => d.name));
+const DEFAULT_EXCHANGE_NAMES = new Set(
+  DEFAULT_EXCHANGE_DEFS.map((d) => d.name)
+);
 
 function isReservedPrefix(name: string): boolean {
   return name.startsWith('amq.');
@@ -47,25 +49,41 @@ interface EquivalenceMismatch {
 function findMismatch(
   existing: Exchange,
   type: ExchangeType,
-  opts: DeclareExchangeOptions,
+  opts: DeclareExchangeOptions
 ): EquivalenceMismatch | null {
   if (existing.type !== type) {
-    return { field: 'type', received: `'${type}'`, current: `'${existing.type}'` };
+    return {
+      field: 'type',
+      received: `'${type}'`,
+      current: `'${existing.type}'`,
+    };
   }
 
   const durable = opts.durable ?? true;
   if (existing.durable !== durable) {
-    return { field: 'durable', received: `'${durable}'`, current: `'${existing.durable}'` };
+    return {
+      field: 'durable',
+      received: `'${durable}'`,
+      current: `'${existing.durable}'`,
+    };
   }
 
   const autoDelete = opts.autoDelete ?? false;
   if (existing.autoDelete !== autoDelete) {
-    return { field: 'auto_delete', received: `'${autoDelete}'`, current: `'${existing.autoDelete}'` };
+    return {
+      field: 'auto_delete',
+      received: `'${autoDelete}'`,
+      current: `'${existing.autoDelete}'`,
+    };
   }
 
   const internal = opts.internal ?? false;
   if (existing.internal !== internal) {
-    return { field: 'internal', received: `'${internal}'`, current: `'${existing.internal}'` };
+    return {
+      field: 'internal',
+      received: `'${internal}'`,
+      current: `'${existing.internal}'`,
+    };
   }
 
   const newArgs = opts.arguments ?? {};
@@ -73,11 +91,19 @@ function findMismatch(
   const existingKeys = Object.keys(existingArgs);
   const newKeys = Object.keys(newArgs);
   if (existingKeys.length !== newKeys.length) {
-    return { field: 'arguments', received: 'inequivalent arguments', current: 'current arguments' };
+    return {
+      field: 'arguments',
+      received: 'inequivalent arguments',
+      current: 'current arguments',
+    };
   }
   for (const key of existingKeys) {
     if (existingArgs[key] !== newArgs[key]) {
-      return { field: 'arguments', received: 'inequivalent arguments', current: 'current arguments' };
+      return {
+        field: 'arguments',
+        received: 'inequivalent arguments',
+        current: 'current arguments',
+      };
     }
   }
 
@@ -91,7 +117,9 @@ function findMismatch(
  */
 export class ExchangeRegistry {
   private readonly exchanges = new Map<string, Exchange>();
-  private readonly bindingCountFn: ((exchangeName: string) => number) | undefined;
+  private readonly bindingCountFn:
+    | ((exchangeName: string) => number)
+    | undefined;
 
   constructor(options?: { bindingCount?: (exchangeName: string) => number }) {
     this.bindingCountFn = options?.bindingCount;
@@ -99,7 +127,11 @@ export class ExchangeRegistry {
   }
 
   /** Declare an exchange (idempotent if equivalent). */
-  declareExchange(name: string, type: ExchangeType, opts: DeclareExchangeOptions = {}): Exchange {
+  declareExchange(
+    name: string,
+    type: ExchangeType,
+    opts: DeclareExchangeOptions = {}
+  ): Exchange {
     const existing = this.exchanges.get(name);
 
     if (existing) {
@@ -111,7 +143,7 @@ export class ExchangeRegistry {
       throw channelError.preconditionFailed(
         `inequivalent arg '${mismatch.field}' for exchange '${name}' in vhost '/': received ${mismatch.received} but current is ${mismatch.current}`,
         EXCHANGE_CLASS_ID,
-        EXCHANGE_DECLARE_METHOD_ID,
+        EXCHANGE_DECLARE_METHOD_ID
       );
     }
 
@@ -120,7 +152,7 @@ export class ExchangeRegistry {
       throw channelError.accessRefused(
         `exchange name '${name}' contains reserved prefix 'amq.*'`,
         EXCHANGE_CLASS_ID,
-        EXCHANGE_DECLARE_METHOD_ID,
+        EXCHANGE_DECLARE_METHOD_ID
       );
     }
 
@@ -147,7 +179,7 @@ export class ExchangeRegistry {
       throw channelError.accessRefused(
         `cannot delete exchange '${name}': it is a pre-declared exchange`,
         EXCHANGE_CLASS_ID,
-        EXCHANGE_DELETE_METHOD_ID,
+        EXCHANGE_DELETE_METHOD_ID
       );
     }
 
@@ -165,7 +197,7 @@ export class ExchangeRegistry {
         throw channelError.preconditionFailed(
           `exchange '${name}' has ${count} binding(s)`,
           EXCHANGE_CLASS_ID,
-          EXCHANGE_DELETE_METHOD_ID,
+          EXCHANGE_DELETE_METHOD_ID
         );
       }
     }
@@ -184,7 +216,7 @@ export class ExchangeRegistry {
       throw channelError.notFound(
         `no exchange '${name}' in vhost '/'`,
         EXCHANGE_CLASS_ID,
-        EXCHANGE_DECLARE_METHOD_ID,
+        EXCHANGE_DECLARE_METHOD_ID
       );
     }
     return existing;

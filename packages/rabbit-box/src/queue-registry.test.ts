@@ -28,7 +28,11 @@ describe('declareQueue', () => {
   it('creates a new queue with default options', () => {
     const reg = createRegistry();
     const result = reg.declareQueue('orders', {});
-    expect(result).toEqual({ queue: 'orders', messageCount: 0, consumerCount: 0 });
+    expect(result).toEqual({
+      queue: 'orders',
+      messageCount: 0,
+      consumerCount: 0,
+    });
   });
 
   it('creates a queue with custom options', () => {
@@ -39,7 +43,11 @@ describe('declareQueue', () => {
       autoDelete: false,
       arguments: { 'x-message-ttl': 60000 },
     });
-    expect(result).toEqual({ queue: 'durable-q', messageCount: 0, consumerCount: 0 });
+    expect(result).toEqual({
+      queue: 'durable-q',
+      messageCount: 0,
+      consumerCount: 0,
+    });
   });
 
   it('generates amq.gen-* name when name is empty', () => {
@@ -69,7 +77,12 @@ describe('declareQueue', () => {
 
   it('is idempotent when re-declared with same options', () => {
     const reg = createRegistry();
-    const opts = { durable: true, autoDelete: false, exclusive: false, arguments: {} };
+    const opts = {
+      durable: true,
+      autoDelete: false,
+      exclusive: false,
+      arguments: {},
+    };
     reg.declareQueue('q1', opts);
     const result = reg.declareQueue('q1', opts);
     expect(result).toEqual({ queue: 'q1', messageCount: 0, consumerCount: 0 });
@@ -95,7 +108,9 @@ describe('declareQueue', () => {
   it('throws PRECONDITION_FAILED when durable differs', () => {
     const reg = createRegistry();
     reg.declareQueue('q1', { durable: true });
-    expect(() => reg.declareQueue('q1', { durable: false })).toThrow(ChannelError);
+    expect(() => reg.declareQueue('q1', { durable: false })).toThrow(
+      ChannelError
+    );
     try {
       reg.declareQueue('q1', { durable: false });
     } catch (err) {
@@ -112,7 +127,9 @@ describe('declareQueue', () => {
   it('throws PRECONDITION_FAILED when autoDelete differs', () => {
     const reg = createRegistry();
     reg.declareQueue('q1', { autoDelete: true });
-    expect(() => reg.declareQueue('q1', { autoDelete: false })).toThrow(ChannelError);
+    expect(() => reg.declareQueue('q1', { autoDelete: false })).toThrow(
+      ChannelError
+    );
     try {
       reg.declareQueue('q1', { autoDelete: false });
     } catch (err) {
@@ -125,7 +142,9 @@ describe('declareQueue', () => {
   it('throws PRECONDITION_FAILED when exclusive differs', () => {
     const reg = createRegistry();
     reg.declareQueue('q1', { exclusive: true }, 'conn-1');
-    expect(() => reg.declareQueue('q1', { exclusive: false }, 'conn-1')).toThrow(ChannelError);
+    expect(() =>
+      reg.declareQueue('q1', { exclusive: false }, 'conn-1')
+    ).toThrow(ChannelError);
     try {
       reg.declareQueue('q1', { exclusive: false }, 'conn-1');
     } catch (err) {
@@ -153,9 +172,9 @@ describe('declareQueue', () => {
   it('throws PRECONDITION_FAILED when arguments keys differ', () => {
     const reg = createRegistry();
     reg.declareQueue('q1', { arguments: { 'x-message-ttl': 5000 } });
-    expect(() =>
-      reg.declareQueue('q1', { arguments: {} })
-    ).toThrow(ChannelError);
+    expect(() => reg.declareQueue('q1', { arguments: {} })).toThrow(
+      ChannelError
+    );
   });
 
   it('throws PRECONDITION_FAILED when new declare has extra arguments', () => {
@@ -171,8 +190,16 @@ describe('declareQueue', () => {
   it('allows owner connection to re-declare exclusive queue', () => {
     const reg = createRegistry();
     reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
-    const result = reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
-    expect(result).toEqual({ queue: 'exclusive-q', messageCount: 0, consumerCount: 0 });
+    const result = reg.declareQueue(
+      'exclusive-q',
+      { exclusive: true },
+      'conn-1'
+    );
+    expect(result).toEqual({
+      queue: 'exclusive-q',
+      messageCount: 0,
+      consumerCount: 0,
+    });
   });
 
   it('throws RESOURCE_LOCKED when non-owner declares exclusive queue', () => {
@@ -196,10 +223,18 @@ describe('declareQueue', () => {
 
   it('RESOURCE_LOCKED takes priority over PRECONDITION_FAILED for exclusive queues', () => {
     const reg = createRegistry();
-    reg.declareQueue('exclusive-q', { exclusive: true, durable: true }, 'conn-1');
+    reg.declareQueue(
+      'exclusive-q',
+      { exclusive: true, durable: true },
+      'conn-1'
+    );
     try {
       // Different connection AND different options — should get RESOURCE_LOCKED, not PRECONDITION_FAILED
-      reg.declareQueue('exclusive-q', { exclusive: true, durable: false }, 'conn-2');
+      reg.declareQueue(
+        'exclusive-q',
+        { exclusive: true, durable: false },
+        'conn-2'
+      );
     } catch (err) {
       const e = err as ChannelError;
       expect(e.replyCode).toBe(RESOURCE_LOCKED);
@@ -275,9 +310,7 @@ describe('deleteQueue', () => {
     } catch (err) {
       const e = err as ChannelError;
       expect(e.replyCode).toBe(NOT_FOUND);
-      expect(e.replyText).toBe(
-        "NOT_FOUND - no queue 'ghost' in vhost '/'"
-      );
+      expect(e.replyText).toBe("NOT_FOUND - no queue 'ghost' in vhost '/'");
       expect(e.classId).toBe(QUEUE_CLASS);
       expect(e.methodId).toBe(QUEUE_DELETE);
     }
@@ -287,7 +320,9 @@ describe('deleteQueue', () => {
     const reg = createRegistry();
     reg.declareQueue('q1', {});
     reg.setConsumerCount('q1', 1);
-    expect(() => reg.deleteQueue('q1', { ifUnused: true })).toThrow(ChannelError);
+    expect(() => reg.deleteQueue('q1', { ifUnused: true })).toThrow(
+      ChannelError
+    );
     try {
       reg.deleteQueue('q1', { ifUnused: true });
     } catch (err) {
@@ -312,7 +347,9 @@ describe('deleteQueue', () => {
     const reg = createRegistry();
     reg.declareQueue('q1', {});
     reg.setMessageCount('q1', 10);
-    expect(() => reg.deleteQueue('q1', { ifEmpty: true })).toThrow(ChannelError);
+    expect(() => reg.deleteQueue('q1', { ifEmpty: true })).toThrow(
+      ChannelError
+    );
     try {
       reg.deleteQueue('q1', { ifEmpty: true });
     } catch (err) {
@@ -336,7 +373,9 @@ describe('deleteQueue', () => {
   it('throws RESOURCE_LOCKED when non-owner deletes exclusive queue', () => {
     const reg = createRegistry();
     reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
-    expect(() => reg.deleteQueue('exclusive-q', {}, 'conn-2')).toThrow(ChannelError);
+    expect(() => reg.deleteQueue('exclusive-q', {}, 'conn-2')).toThrow(
+      ChannelError
+    );
     try {
       reg.deleteQueue('exclusive-q', {}, 'conn-2');
     } catch (err) {
@@ -363,7 +402,9 @@ describe('deleteQueue', () => {
     reg.setConsumerCount('q1', 1);
     reg.setMessageCount('q1', 5);
     // ifUnused is checked first
-    expect(() => reg.deleteQueue('q1', { ifUnused: true, ifEmpty: true })).toThrow(ChannelError);
+    expect(() =>
+      reg.deleteQueue('q1', { ifUnused: true, ifEmpty: true })
+    ).toThrow(ChannelError);
     try {
       reg.deleteQueue('q1', { ifUnused: true, ifEmpty: true });
     } catch (err) {
@@ -401,9 +442,7 @@ describe('checkQueue', () => {
     } catch (err) {
       const e = err as ChannelError;
       expect(e.replyCode).toBe(NOT_FOUND);
-      expect(e.replyText).toBe(
-        "NOT_FOUND - no queue 'ghost' in vhost '/'"
-      );
+      expect(e.replyText).toBe("NOT_FOUND - no queue 'ghost' in vhost '/'");
       expect(e.classId).toBe(QUEUE_CLASS);
       expect(e.methodId).toBe(QUEUE_DECLARE);
     }
@@ -430,7 +469,11 @@ describe('checkQueue', () => {
     const reg = createRegistry();
     reg.declareQueue('exclusive-q', { exclusive: true }, 'conn-1');
     const result = reg.checkQueue('exclusive-q', 'conn-1');
-    expect(result).toEqual({ queue: 'exclusive-q', messageCount: 0, consumerCount: 0 });
+    expect(result).toEqual({
+      queue: 'exclusive-q',
+      messageCount: 0,
+      consumerCount: 0,
+    });
   });
 });
 
@@ -463,9 +506,7 @@ describe('purgeQueue', () => {
     } catch (err) {
       const e = err as ChannelError;
       expect(e.replyCode).toBe(NOT_FOUND);
-      expect(e.replyText).toBe(
-        "NOT_FOUND - no queue 'ghost' in vhost '/'"
-      );
+      expect(e.replyText).toBe("NOT_FOUND - no queue 'ghost' in vhost '/'");
       expect(e.classId).toBe(QUEUE_CLASS);
       expect(e.methodId).toBe(QUEUE_PURGE);
     }

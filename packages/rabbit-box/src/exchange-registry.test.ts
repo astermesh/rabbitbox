@@ -109,7 +109,7 @@ describe('ExchangeRegistry', () => {
         const e = err as ChannelError;
         expect(e.replyCode).toBe(PRECONDITION_FAILED);
         expect(e.replyText).toBe(
-          "PRECONDITION_FAILED - inequivalent arg 'type' for exchange 'logs' in vhost '/': received 'direct' but current is 'fanout'",
+          "PRECONDITION_FAILED - inequivalent arg 'type' for exchange 'logs' in vhost '/': received 'direct' but current is 'fanout'"
         );
         expect(e.classId).toBe(EXCHANGE_CLASS_ID);
         expect(e.methodId).toBe(EXCHANGE_DECLARE_METHOD_ID);
@@ -127,7 +127,7 @@ describe('ExchangeRegistry', () => {
         const e = err as ChannelError;
         expect(e.replyCode).toBe(PRECONDITION_FAILED);
         expect(e.replyText).toBe(
-          "PRECONDITION_FAILED - inequivalent arg 'durable' for exchange 'logs' in vhost '/': received 'false' but current is 'true'",
+          "PRECONDITION_FAILED - inequivalent arg 'durable' for exchange 'logs' in vhost '/': received 'false' but current is 'true'"
         );
       }
     });
@@ -143,7 +143,7 @@ describe('ExchangeRegistry', () => {
         const e = err as ChannelError;
         expect(e.replyCode).toBe(PRECONDITION_FAILED);
         expect(e.replyText).toBe(
-          "PRECONDITION_FAILED - inequivalent arg 'auto_delete' for exchange 'logs' in vhost '/': received 'true' but current is 'false'",
+          "PRECONDITION_FAILED - inequivalent arg 'auto_delete' for exchange 'logs' in vhost '/': received 'true' but current is 'false'"
         );
       }
     });
@@ -159,7 +159,7 @@ describe('ExchangeRegistry', () => {
         const e = err as ChannelError;
         expect(e.replyCode).toBe(PRECONDITION_FAILED);
         expect(e.replyText).toBe(
-          "PRECONDITION_FAILED - inequivalent arg 'internal' for exchange 'logs' in vhost '/': received 'true' but current is 'false'",
+          "PRECONDITION_FAILED - inequivalent arg 'internal' for exchange 'logs' in vhost '/': received 'true' but current is 'false'"
         );
       }
     });
@@ -203,7 +203,7 @@ describe('ExchangeRegistry', () => {
         expect(err).toBeInstanceOf(ChannelError);
         const e = err as ChannelError;
         expect(e.replyCode).toBe(ACCESS_REFUSED);
-        expect(e.replyText).toContain("amq.*");
+        expect(e.replyText).toContain('amq.*');
         expect(e.classId).toBe(EXCHANGE_CLASS_ID);
         expect(e.methodId).toBe(EXCHANGE_DECLARE_METHOD_ID);
       }
@@ -248,7 +248,9 @@ describe('ExchangeRegistry', () => {
     });
 
     it('throws ACCESS_REFUSED when deleting amq.headers', () => {
-      expect(() => registry.deleteExchange('amq.headers')).toThrow(ChannelError);
+      expect(() => registry.deleteExchange('amq.headers')).toThrow(
+        ChannelError
+      );
     });
 
     it('throws ACCESS_REFUSED when deleting amq.match', () => {
@@ -305,9 +307,7 @@ describe('ExchangeRegistry', () => {
         expect(err).toBeInstanceOf(ChannelError);
         const e = err as ChannelError;
         expect(e.replyCode).toBe(NOT_FOUND);
-        expect(e.replyText).toBe(
-          "NOT_FOUND - no exchange 'nope' in vhost '/'",
-        );
+        expect(e.replyText).toBe("NOT_FOUND - no exchange 'nope' in vhost '/'");
         expect(e.classId).toBe(EXCHANGE_CLASS_ID);
         expect(e.methodId).toBe(EXCHANGE_DECLARE_METHOD_ID);
       }

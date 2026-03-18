@@ -45,7 +45,7 @@ function topicMatchWords(
   rWords: string[],
   ri: number,
   pWords: string[],
-  pi: number,
+  pi: number
 ): boolean {
   // Both exhausted → match
   if (ri === rWords.length && pi === pWords.length) return true;
@@ -85,12 +85,7 @@ function topicMatchWords(
 }
 
 /** Valid x-match modes. */
-const VALID_X_MATCH_MODES = new Set([
-  'all',
-  'any',
-  'all-with-x',
-  'any-with-x',
-]);
+const VALID_X_MATCH_MODES = new Set(['all', 'any', 'all-with-x', 'any-with-x']);
 
 /**
  * Headers exchange routing: match message headers against binding arguments.
@@ -106,7 +101,7 @@ const VALID_X_MATCH_MODES = new Set([
  */
 export function headersMatch(
   messageHeaders: Record<string, unknown>,
-  bindingArgs: Record<string, unknown>,
+  bindingArgs: Record<string, unknown>
 ): boolean {
   const xMatch = (bindingArgs['x-match'] as string | undefined) ?? 'all';
 
@@ -114,7 +109,7 @@ export function headersMatch(
     throw channelError.preconditionFailed(
       `invalid x-match value '${xMatch}': expected all, any, all-with-x, or any-with-x`,
       QUEUE_CLASS_ID,
-      QUEUE_BIND_METHOD_ID,
+      QUEUE_BIND_METHOD_ID
     );
   }
 
@@ -170,7 +165,7 @@ export function route(
   exchange: Exchange,
   bindings: readonly Binding[],
   routingKey: string,
-  messageHeaders?: Record<string, unknown>,
+  messageHeaders?: Record<string, unknown>
 ): Binding[] {
   switch (exchange.type) {
     case 'direct':
@@ -184,7 +179,7 @@ export function route(
 
     case 'headers':
       return bindings.filter((b) =>
-        headersMatch(messageHeaders ?? {}, b.arguments),
+        headersMatch(messageHeaders ?? {}, b.arguments)
       );
   }
 }

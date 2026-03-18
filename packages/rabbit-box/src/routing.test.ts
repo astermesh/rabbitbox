@@ -245,8 +245,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf', type: 'report' },
-          { format: 'pdf', type: 'report', 'x-match': 'all' },
-        ),
+          { format: 'pdf', type: 'report', 'x-match': 'all' }
+        )
       ).toBe(true);
     });
 
@@ -254,8 +254,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf', type: 'report', extra: 'value' },
-          { format: 'pdf', type: 'report', 'x-match': 'all' },
-        ),
+          { format: 'pdf', type: 'report', 'x-match': 'all' }
+        )
       ).toBe(true);
     });
 
@@ -263,8 +263,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf' },
-          { format: 'pdf', type: 'report', 'x-match': 'all' },
-        ),
+          { format: 'pdf', type: 'report', 'x-match': 'all' }
+        )
       ).toBe(false);
     });
 
@@ -272,8 +272,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'csv', type: 'report' },
-          { format: 'pdf', type: 'report', 'x-match': 'all' },
-        ),
+          { format: 'pdf', type: 'report', 'x-match': 'all' }
+        )
       ).toBe(false);
     });
 
@@ -281,8 +281,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf' },
-          { format: 'pdf', 'x-match': 'all', 'x-custom': 'ignored' },
-        ),
+          { format: 'pdf', 'x-match': 'all', 'x-custom': 'ignored' }
+        )
       ).toBe(true);
     });
 
@@ -290,15 +290,13 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf', type: 'report' },
-          { format: 'pdf', type: 'report' },
-        ),
+          { format: 'pdf', type: 'report' }
+        )
       ).toBe(true);
     });
 
     it('matches with empty binding args (excluding x-match)', () => {
-      expect(headersMatch({ format: 'pdf' }, { 'x-match': 'all' })).toBe(
-        true,
-      );
+      expect(headersMatch({ format: 'pdf' }, { 'x-match': 'all' })).toBe(true);
     });
   });
 
@@ -309,8 +307,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf', type: 'log' },
-          { format: 'pdf', type: 'report', 'x-match': 'any' },
-        ),
+          { format: 'pdf', type: 'report', 'x-match': 'any' }
+        )
       ).toBe(true);
     });
 
@@ -318,8 +316,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'csv', type: 'log' },
-          { format: 'pdf', type: 'report', 'x-match': 'any' },
-        ),
+          { format: 'pdf', type: 'report', 'x-match': 'any' }
+        )
       ).toBe(false);
     });
 
@@ -327,15 +325,13 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { 'x-custom': 'value' },
-          { 'x-custom': 'value', 'x-match': 'any' },
-        ),
+          { 'x-custom': 'value', 'x-match': 'any' }
+        )
       ).toBe(false);
     });
 
     it('does not match with empty binding args (excluding x-match)', () => {
-      expect(headersMatch({ format: 'pdf' }, { 'x-match': 'any' })).toBe(
-        false,
-      );
+      expect(headersMatch({ format: 'pdf' }, { 'x-match': 'any' })).toBe(false);
     });
   });
 
@@ -346,8 +342,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf', 'x-custom': 'value' },
-          { format: 'pdf', 'x-custom': 'value', 'x-match': 'all-with-x' },
-        ),
+          { format: 'pdf', 'x-custom': 'value', 'x-match': 'all-with-x' }
+        )
       ).toBe(true);
     });
 
@@ -355,8 +351,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf' },
-          { format: 'pdf', 'x-custom': 'value', 'x-match': 'all-with-x' },
-        ),
+          { format: 'pdf', 'x-custom': 'value', 'x-match': 'all-with-x' }
+        )
       ).toBe(false);
     });
 
@@ -364,8 +360,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'pdf' },
-          { format: 'pdf', 'x-match': 'all-with-x' },
-        ),
+          { format: 'pdf', 'x-match': 'all-with-x' }
+        )
       ).toBe(true);
     });
   });
@@ -377,8 +373,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { 'x-custom': 'value' },
-          { 'x-custom': 'value', 'x-match': 'any-with-x' },
-        ),
+          { 'x-custom': 'value', 'x-match': 'any-with-x' }
+        )
       ).toBe(true);
     });
 
@@ -386,8 +382,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'csv', 'x-custom': 'value' },
-          { format: 'pdf', 'x-custom': 'value', 'x-match': 'any-with-x' },
-        ),
+          { format: 'pdf', 'x-custom': 'value', 'x-match': 'any-with-x' }
+        )
       ).toBe(true);
     });
 
@@ -395,8 +391,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'csv' },
-          { format: 'pdf', 'x-match': 'any-with-x' },
-        ),
+          { format: 'pdf', 'x-match': 'any-with-x' }
+        )
       ).toBe(false);
     });
   });
@@ -408,8 +404,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'anything' },
-          { format: undefined, 'x-match': 'all' },
-        ),
+          { format: undefined, 'x-match': 'all' }
+        )
       ).toBe(true);
     });
 
@@ -417,8 +413,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { other: 'value' },
-          { format: undefined, 'x-match': 'all' },
-        ),
+          { format: undefined, 'x-match': 'all' }
+        )
       ).toBe(false);
     });
 
@@ -426,8 +422,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'anything' },
-          { format: undefined, 'x-match': 'any' },
-        ),
+          { format: undefined, 'x-match': 'any' }
+        )
       ).toBe(true);
     });
 
@@ -435,8 +431,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'anything', type: 'report' },
-          { format: undefined, type: 'report', 'x-match': 'all' },
-        ),
+          { format: undefined, type: 'report', 'x-match': 'all' }
+        )
       ).toBe(true);
     });
 
@@ -444,8 +440,8 @@ describe('headersMatch', () => {
       expect(
         headersMatch(
           { format: 'anything', type: 'log' },
-          { format: undefined, type: 'report', 'x-match': 'all' },
-        ),
+          { format: undefined, type: 'report', 'x-match': 'all' }
+        )
       ).toBe(false);
     });
   });
@@ -462,7 +458,7 @@ describe('headersMatch', () => {
         const e = err as ChannelError;
         expect(e.replyCode).toBe(PRECONDITION_FAILED);
         expect(e.replyText).toContain(
-          'expected all, any, all-with-x, or any-with-x',
+          'expected all, any, all-with-x, or any-with-x'
         );
       }
     });
@@ -482,7 +478,7 @@ describe('route', () => {
     exchange: string,
     queue: string,
     routingKey = '',
-    args: Record<string, unknown> = {},
+    args: Record<string, unknown> = {}
   ): Binding {
     return { exchange, queue, routingKey, arguments: args };
   }
@@ -498,7 +494,7 @@ describe('route', () => {
       const result = route(
         exchangeRegistry.checkExchange('amq.direct'),
         bindings,
-        'order.created',
+        'order.created'
       );
 
       expect(result).toHaveLength(2);
@@ -510,7 +506,7 @@ describe('route', () => {
       const result = route(
         exchangeRegistry.checkExchange('amq.direct'),
         bindings,
-        'order.created',
+        'order.created'
       );
       expect(result).toEqual([]);
     });
@@ -527,7 +523,7 @@ describe('route', () => {
       const result = route(
         exchangeRegistry.checkExchange('amq.fanout'),
         bindings,
-        'ignored',
+        'ignored'
       );
 
       expect(result).toHaveLength(3);
@@ -537,7 +533,7 @@ describe('route', () => {
       const result = route(
         exchangeRegistry.checkExchange('amq.fanout'),
         [],
-        'key',
+        'key'
       );
       expect(result).toEqual([]);
     });
@@ -554,7 +550,7 @@ describe('route', () => {
       const result = route(
         exchangeRegistry.checkExchange('amq.topic'),
         bindings,
-        'order.created',
+        'order.created'
       );
 
       expect(result).toHaveLength(2);
@@ -566,7 +562,7 @@ describe('route', () => {
       const result = route(
         exchangeRegistry.checkExchange('amq.topic'),
         bindings,
-        'any.routing.key',
+        'any.routing.key'
       );
       expect(result).toHaveLength(1);
     });
@@ -594,7 +590,7 @@ describe('route', () => {
         exchangeRegistry.checkExchange('amq.headers'),
         bindings,
         '',
-        { format: 'pdf', type: 'report' },
+        { format: 'pdf', type: 'report' }
       );
 
       expect(result).toHaveLength(2);
@@ -613,7 +609,7 @@ describe('route', () => {
         exchangeRegistry.checkExchange('amq.headers'),
         bindings,
         'completely.different.key',
-        { format: 'pdf' },
+        { format: 'pdf' }
       );
 
       expect(result).toHaveLength(1);
@@ -630,7 +626,7 @@ describe('route', () => {
       const result = route(
         exchangeRegistry.checkExchange(''),
         bindings,
-        'my-queue',
+        'my-queue'
       );
 
       expect(result).toHaveLength(1);
