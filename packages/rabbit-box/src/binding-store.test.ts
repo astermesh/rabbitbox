@@ -129,6 +129,36 @@ describe('BindingStore', () => {
       expect(store.getBindings('logs')).toHaveLength(2);
     });
 
+    it('is idempotent regardless of argument key insertion order', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+
+      store.addBinding('logs', 'q1', '', { x: 1, y: 2 });
+      store.addBinding('logs', 'q1', '', { y: 2, x: 1 });
+
+      expect(store.getBindings('logs')).toHaveLength(1);
+    });
+
+    it('is idempotent with nested object arguments', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+
+      store.addBinding('logs', 'q1', '', { headers: { env: 'prod' } });
+      store.addBinding('logs', 'q1', '', { headers: { env: 'prod' } });
+
+      expect(store.getBindings('logs')).toHaveLength(1);
+    });
+
+    it('treats arguments with different keys but same count as different', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+
+      store.addBinding('logs', 'q1', 'rk', { a: 1 });
+      store.addBinding('logs', 'q1', 'rk', { b: 1 });
+
+      expect(store.getBindings('logs')).toHaveLength(2);
+    });
+
     it('stores a defensive copy of arguments', () => {
       declareExchange('logs');
       declareQueue('q1');
@@ -207,6 +237,9 @@ describe('BindingStore', () => {
     });
 
     it('is idempotent — removing non-existent binding is a no-op', () => {
+      declareExchange('logs');
+      declareQueue('q1');
+
       expect(() => store.removeBinding('logs', 'q1', 'info', {})).not.toThrow();
     });
 
@@ -241,6 +274,34 @@ describe('BindingStore', () => {
       store.removeBinding('logs', 'q1', 'error', {});
 
       expect(store.getBindings('logs')).toHaveLength(1);
+    });
+
+    it('throws NOT_FOUND when exchange does not exist', () => {
+      declareQueue('q1');
+
+      expect(() =>
+        store.removeBinding('no-such-exchange', 'q1', 'rk', {})
+      ).toThrow(ChannelError);
+      expect(() =>
+        store.removeBinding('no-such-exchange', 'q1', 'rk', {})
+      ).toThrow(/no exchange/);
+    });
+
+    it('throws NOT_FOUND when queue does not exist', () => {
+      declareExchange('logs');
+
+      expect(() =>
+        store.removeBinding('logs', 'no-such-queue', 'rk', {})
+      ).toThrow(ChannelError);
+      expect(() =>
+        store.removeBinding('logs', 'no-such-queue', 'rk', {})
+      ).toThrow(/no queue/);
+    });
+
+    it('validates exchange before queue — exchange error takes priority', () => {
+      expect(() => store.removeBinding('no-ex', 'no-q', 'rk', {})).toThrow(
+        /no exchange/
+      );
     });
 
     it('removes only the matching binding among multiple', () => {

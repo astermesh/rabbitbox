@@ -4,6 +4,7 @@ import { channelError } from './errors/factories.ts';
 /** AMQP class/method IDs for queue.bind / queue.unbind. */
 const QUEUE_CLASS_ID = 50;
 const QUEUE_BIND_METHOD_ID = 20;
+const QUEUE_UNBIND_METHOD_ID = 50;
 
 /** Options for constructing a BindingStore. */
 export interface BindingStoreOptions {
@@ -14,21 +15,38 @@ export interface BindingStoreOptions {
 }
 
 /**
+ * Recursive deep-equality comparison for AMQP field-table values.
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== 'object' || a === null || b === null) return false;
+
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEqual(v, (b as unknown[])[i]));
+  }
+  if (Array.isArray(b)) return false;
+
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const keysA = Object.keys(ra);
+  const keysB = Object.keys(rb);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every(
+    (k) =>
+      Object.prototype.hasOwnProperty.call(rb, k) && deepEqual(ra[k], rb[k])
+  );
+}
+
+/**
  * Deep-equality comparison for binding arguments tables.
  */
 function argsEqual(
   a: Record<string, unknown>,
   b: Record<string, unknown>
 ): boolean {
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (a[key] !== b[key]) {
-      if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false;
-    }
-  }
-  return true;
+  return deepEqual(a, b);
 }
 
 /**
@@ -112,6 +130,9 @@ export class BindingStore {
   /**
    * Remove a binding. Idempotent — no error if binding doesn't exist.
    * Matches by deep equality on (exchange, queue, routingKey, arguments).
+   *
+   * Validates that both exchange and queue exist (NOT_FOUND if missing),
+   * matching real RabbitMQ queue.unbind behavior.
    */
   removeBinding(
     exchange: string,
@@ -119,6 +140,21 @@ export class BindingStore {
     routingKey: string,
     args: Record<string, unknown>
   ): void {
+    if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
+      throw channelError.notFound(
+        `no exchange '${exchange}' in vhost '/'`,
+        QUEUE_CLASS_ID,
+        QUEUE_UNBIND_METHOD_ID
+      );
+    }
+    if (this.hasQueueFn && !this.hasQueueFn(queue)) {
+      throw channelError.notFound(
+        `no queue '${queue}' in vhost '/'`,
+        QUEUE_CLASS_ID,
+        QUEUE_UNBIND_METHOD_ID
+      );
+    }
+
     const list = this.byExchange.get(exchange);
     if (!list) return;
 
