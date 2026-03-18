@@ -1,5 +1,7 @@
 # T01: Connection & Channel Lifecycle
 
+**Status:** done
+
 Implement the in-process connection and channel model.
 
 ## Scope
