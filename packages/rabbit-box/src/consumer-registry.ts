@@ -1,5 +1,5 @@
 import type { DeliveredMessage } from './types/message.ts';
-import { channelError } from './errors/factories.ts';
+import { channelError, connectionError } from './errors/factories.ts';
 
 /** AMQP class/method IDs for basic operations. */
 const BASIC_CLASS = 60;
@@ -30,9 +30,9 @@ export interface ConsumerRegistryOptions {
   readonly generateTag?: () => string;
 }
 
-let tagCounter = 0;
-function defaultGenerateTag(): string {
-  return `amq.ctag-${++tagCounter}`;
+function createTagGenerator(): () => string {
+  let counter = 0;
+  return () => `amq.ctag-${++counter}`;
 }
 
 /**
@@ -48,7 +48,7 @@ export class ConsumerRegistry {
   private readonly queueExists: ((name: string) => boolean) | undefined;
 
   constructor(options?: ConsumerRegistryOptions) {
-    this.generateTag = options?.generateTag ?? defaultGenerateTag;
+    this.generateTag = options?.generateTag ?? createTagGenerator();
     this.queueExists = options?.queueExists;
   }
 
@@ -74,10 +74,10 @@ export class ConsumerRegistry {
 
     const consumerTag = options.consumerTag || this.generateTag();
 
-    // Reject duplicate tag
+    // Reject duplicate tag — real RabbitMQ raises NOT_ALLOWED (530) connection error
     if (this.byTag.has(consumerTag)) {
-      throw channelError.notFound(
-        `consumer tag '${consumerTag}' already in use`,
+      throw connectionError.notAllowed(
+        `attempt to reuse consumer tag '${consumerTag}'`,
         BASIC_CLASS,
         BASIC_CONSUME
       );

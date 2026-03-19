@@ -27,6 +27,11 @@ function makeDeps(): ChannelDeps {
   };
 }
 
+/** Flush all pending microtasks (queueMicrotask callbacks). */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('Dispatcher', () => {
   let registry: ConsumerRegistry;
   let dispatcher: Dispatcher;
@@ -39,7 +44,7 @@ describe('Dispatcher', () => {
   // ── Basic dispatch ────────────────────────────────────────────────
 
   describe('basic dispatch', () => {
-    it('delivers a message to a single consumer', () => {
+    it('delivers a message to a single consumer', async () => {
       const channel = new Channel(1, makeDeps());
       const received: DeliveredMessage[] = [];
       const cb = (msg: DeliveredMessage) => received.push(msg);
@@ -51,6 +56,7 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(received).toHaveLength(1);
       const msg = received[0];
@@ -64,7 +70,7 @@ describe('Dispatcher', () => {
       expect(msg?.routingKey).toBe('test');
     });
 
-    it('assigns sequential delivery tags from channel', () => {
+    it('assigns sequential delivery tags from channel', async () => {
       const channel = new Channel(1, makeDeps());
       const tags: number[] = [];
       const cb = (msg: DeliveredMessage) => tags.push(msg.deliveryTag);
@@ -78,6 +84,7 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(tags).toEqual([1, 2, 3]);
     });
@@ -94,6 +101,7 @@ describe('Dispatcher', () => {
         ch === 1 ? channel : undefined
       );
 
+      // Unacked tracking is synchronous, no need to flush
       expect(channel.unackedCount).toBe(1);
     });
 
@@ -121,7 +129,7 @@ describe('Dispatcher', () => {
       expect(store.count()).toBe(1); // message stays in queue
     });
 
-    it('does nothing when message store is empty', () => {
+    it('does nothing when message store is empty', async () => {
       const channel = new Channel(1, makeDeps());
       const cb = vi.fn();
       const store = new MessageStore();
@@ -131,11 +139,12 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(cb).not.toHaveBeenCalled();
     });
 
-    it('sets redelivered=true for messages with deliveryCount > 0', () => {
+    it('sets redelivered=true for messages with deliveryCount > 0', async () => {
       const channel = new Channel(1, makeDeps());
       const received: DeliveredMessage[] = [];
       const cb = (msg: DeliveredMessage) => received.push(msg);
@@ -147,11 +156,12 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(received[0]?.redelivered).toBe(true);
     });
 
-    it('includes consumerTag in delivered message', () => {
+    it('includes consumerTag in delivered message', async () => {
       const channel = new Channel(1, makeDeps());
       const received: DeliveredMessage[] = [];
       const cb = (msg: DeliveredMessage) => received.push(msg);
@@ -163,15 +173,33 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(received[0]?.consumerTag).toBe('my-tag');
+    });
+
+    it('delivers consumer callback asynchronously via microtask', () => {
+      const channel = new Channel(1, makeDeps());
+      const received: DeliveredMessage[] = [];
+      const cb = (msg: DeliveredMessage) => received.push(msg);
+      const store = new MessageStore();
+
+      registry.register('q1', 1, cb, {});
+      store.enqueue(makeMessage('a'));
+
+      dispatcher.dispatch('q1', store, (ch) =>
+        ch === 1 ? channel : undefined
+      );
+
+      // Callback must NOT have fired synchronously
+      expect(received).toHaveLength(0);
     });
   });
 
   // ── Round-robin dispatch ──────────────────────────────────────────
 
   describe('round-robin dispatch', () => {
-    it('distributes messages fairly across consumers', () => {
+    it('distributes messages fairly across consumers', async () => {
       const ch1 = new Channel(1, makeDeps());
       const ch2 = new Channel(2, makeDeps());
       const received1: string[] = [];
@@ -201,12 +229,13 @@ describe('Dispatcher', () => {
         if (ch === 2) return ch2;
         return undefined;
       });
+      await flushMicrotasks();
 
       expect(received1).toEqual(['a', 'c']);
       expect(received2).toEqual(['b', 'd']);
     });
 
-    it('round-robin persists across dispatch calls', () => {
+    it('round-robin persists across dispatch calls', async () => {
       const ch1 = new Channel(1, makeDeps());
       const ch2 = new Channel(2, makeDeps());
       const received1: string[] = [];
@@ -234,18 +263,21 @@ describe('Dispatcher', () => {
 
       store.enqueue(makeMessage('a'));
       dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
 
       store.enqueue(makeMessage('b'));
       dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
 
       store.enqueue(makeMessage('c'));
       dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
 
       expect(received1).toEqual(['a', 'c']);
       expect(received2).toEqual(['b']);
     });
 
-    it('skips consumer whose channel is missing', () => {
+    it('skips consumer whose channel is missing', async () => {
       const ch1 = new Channel(1, makeDeps());
       const received1: string[] = [];
       const received2: string[] = [];
@@ -269,6 +301,7 @@ describe('Dispatcher', () => {
 
       // Channel 2 is not available
       dispatcher.dispatch('q1', store, (ch) => (ch === 1 ? ch1 : undefined));
+      await flushMicrotasks();
 
       expect(received1).toEqual(['a', 'b']);
       expect(received2).toEqual([]);
@@ -278,7 +311,7 @@ describe('Dispatcher', () => {
   // ── Per-consumer prefetch (global=false) ──────────────────────────
 
   describe('per-consumer prefetch', () => {
-    it('stops delivering when consumer reaches prefetch limit', () => {
+    it('stops delivering when consumer reaches prefetch limit', async () => {
       const channel = new Channel(1, makeDeps());
       channel.setPrefetch(2, false);
       const received: string[] = [];
@@ -298,12 +331,13 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(received).toEqual(['a', 'b']);
       expect(store.count()).toBe(1); // 'c' still in queue
     });
 
-    it('skips consumer at limit and delivers to next', () => {
+    it('skips consumer at limit and delivers to next', async () => {
       const ch1 = new Channel(1, makeDeps());
       const ch2 = new Channel(2, makeDeps());
       ch1.setPrefetch(1, false);
@@ -334,6 +368,7 @@ describe('Dispatcher', () => {
         if (ch === 2) return ch2;
         return undefined;
       });
+      await flushMicrotasks();
 
       // a → consumer 1 (now at limit), b → consumer 2 (now at limit), c stays
       expect(received1).toEqual(['a']);
@@ -341,7 +376,7 @@ describe('Dispatcher', () => {
       expect(store.count()).toBe(1);
     });
 
-    it('holds messages when all consumers at prefetch limit', () => {
+    it('holds messages when all consumers at prefetch limit', async () => {
       const channel = new Channel(1, makeDeps());
       channel.setPrefetch(1, false);
       const cb = vi.fn();
@@ -354,12 +389,13 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(cb).toHaveBeenCalledTimes(1);
       expect(store.count()).toBe(1);
     });
 
-    it('does not apply prefetch to noAck consumers', () => {
+    it('does not apply prefetch to noAck consumers', async () => {
       const channel = new Channel(1, makeDeps());
       channel.setPrefetch(1, false);
       const received: string[] = [];
@@ -379,6 +415,7 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(received).toEqual(['a', 'b', 'c']);
     });
@@ -387,7 +424,7 @@ describe('Dispatcher', () => {
   // ── Per-channel prefetch (global=true) ────────────────────────────
 
   describe('per-channel prefetch', () => {
-    it('stops delivering when channel reaches shared prefetch limit', () => {
+    it('stops delivering when channel reaches shared prefetch limit', async () => {
       const channel = new Channel(1, makeDeps());
       channel.setPrefetch(2, true);
       const received: string[] = [];
@@ -407,12 +444,13 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(received).toEqual(['a', 'b']);
       expect(store.count()).toBe(1);
     });
 
-    it('channel prefetch is shared across consumers on same channel', () => {
+    it('channel prefetch is shared across consumers on same channel', async () => {
       const channel = new Channel(1, makeDeps());
       channel.setPrefetch(3, true);
       const received1: string[] = [];
@@ -440,13 +478,14 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       // 3 messages total delivered across both consumers, 'd' stays
       expect(received1.length + received2.length).toBe(3);
       expect(store.count()).toBe(1);
     });
 
-    it('both per-consumer and per-channel prefetch apply simultaneously', () => {
+    it('both per-consumer and per-channel prefetch apply simultaneously', async () => {
       const channel = new Channel(1, makeDeps());
       channel.setPrefetch(1, false); // per-consumer: 1
       channel.setPrefetch(3, true); // per-channel: 3
@@ -475,6 +514,7 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       // Per-consumer limit of 1: each consumer gets at most 1
       // Total: 2 delivered (even though channel limit is 3)
@@ -487,7 +527,7 @@ describe('Dispatcher', () => {
   // ── Flow control interaction ──────────────────────────────────────
 
   describe('flow control', () => {
-    it('does not deliver when channel flow is paused', () => {
+    it('does not deliver when channel flow is paused', async () => {
       const channel = new Channel(1, makeDeps());
       channel.setFlow(false);
       const cb = vi.fn();
@@ -499,6 +539,7 @@ describe('Dispatcher', () => {
       dispatcher.dispatch('q1', store, (ch) =>
         ch === 1 ? channel : undefined
       );
+      await flushMicrotasks();
 
       expect(cb).not.toHaveBeenCalled();
       expect(store.count()).toBe(1);
@@ -519,6 +560,7 @@ describe('Dispatcher', () => {
         ch === 1 ? channel : undefined
       );
 
+      // Unacked tracking is synchronous, verified before microtask flush
       expect(registry.getConsumer(tag)?.unackedCount).toBe(1);
     });
 
@@ -540,7 +582,7 @@ describe('Dispatcher', () => {
   // ── Edge cases ────────────────────────────────────────────────────
 
   describe('edge cases', () => {
-    it('handles consumer added between dispatch calls', () => {
+    it('handles consumer added between dispatch calls', async () => {
       const ch1 = new Channel(1, makeDeps());
       const ch2 = new Channel(2, makeDeps());
       const received1: string[] = [];
@@ -562,6 +604,7 @@ describe('Dispatcher', () => {
 
       store.enqueue(makeMessage('a'));
       dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
 
       // Add second consumer
       registry.register(
@@ -574,13 +617,14 @@ describe('Dispatcher', () => {
       store.enqueue(makeMessage('b'));
       store.enqueue(makeMessage('c'));
       dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
 
       expect(received1).toContain('a');
       // Second dispatch distributes across both
       expect(received1.length + received2.length).toBe(3);
     });
 
-    it('handles consumer removed between dispatch calls', () => {
+    it('handles consumer removed between dispatch calls', async () => {
       const ch1 = new Channel(1, makeDeps());
       const received: string[] = [];
       const store = new MessageStore();
@@ -594,17 +638,19 @@ describe('Dispatcher', () => {
 
       store.enqueue(makeMessage('a'));
       dispatcher.dispatch('q1', store, (ch) => (ch === 1 ? ch1 : undefined));
+      await flushMicrotasks();
 
       registry.cancel(tag);
 
       store.enqueue(makeMessage('b'));
       dispatcher.dispatch('q1', store, (ch) => (ch === 1 ? ch1 : undefined));
+      await flushMicrotasks();
 
       expect(received).toEqual(['a']);
       expect(store.count()).toBe(1); // 'b' stays in queue
     });
 
-    it('delivers messages from independent queues separately', () => {
+    it('delivers messages from independent queues separately', async () => {
       const channel = new Channel(1, makeDeps());
       const receivedQ1: string[] = [];
       const receivedQ2: string[] = [];
@@ -631,6 +677,7 @@ describe('Dispatcher', () => {
 
       dispatcher.dispatch('q1', store1, getChannel);
       dispatcher.dispatch('q2', store2, getChannel);
+      await flushMicrotasks();
 
       expect(receivedQ1).toEqual(['q1-a']);
       expect(receivedQ2).toEqual(['q2-a']);

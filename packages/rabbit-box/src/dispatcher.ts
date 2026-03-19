@@ -143,6 +143,6 @@ export class Dispatcher {
       properties: message.properties,
     };
 
-    consumer.callback(delivered);
+    queueMicrotask(() => consumer.callback(delivered));
   }
 }

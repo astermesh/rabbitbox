@@ -1,8 +1,12 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { ConsumerRegistry } from './consumer-registry.ts';
 import type { DeliveredMessage } from './types/message.ts';
-import { ChannelError } from './errors/amqp-error.ts';
-import { ACCESS_REFUSED, NOT_FOUND } from './errors/reply-codes.ts';
+import { ChannelError, ConnectionError } from './errors/amqp-error.ts';
+import {
+  ACCESS_REFUSED,
+  NOT_ALLOWED,
+  NOT_FOUND,
+} from './errors/reply-codes.ts';
 
 describe('ConsumerRegistry', () => {
   let registry: ConsumerRegistry;
@@ -237,11 +241,15 @@ describe('ConsumerRegistry', () => {
   // ── Duplicate consumerTag ─────────────────────────────────────────
 
   describe('duplicate consumerTag', () => {
-    it('rejects duplicate consumer tag', () => {
+    it('rejects duplicate consumer tag with NOT_ALLOWED connection error', () => {
       registry.register('q1', 1, callback, { consumerTag: 'dup' });
-      expect(() =>
-        registry.register('q1', 1, callback, { consumerTag: 'dup' })
-      ).toThrow();
+      try {
+        registry.register('q1', 1, callback, { consumerTag: 'dup' });
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ConnectionError);
+        expect((err as ConnectionError).replyCode).toBe(NOT_ALLOWED);
+      }
     });
   });
 });
