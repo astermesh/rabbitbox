@@ -21,9 +21,15 @@ export {
 export * from './errors/reply-codes.ts';
 export { channelError, connectionError } from './errors/factories.ts';
 export { ExchangeRegistry } from './exchange-registry.ts';
-export type { DeclareExchangeOptions } from './exchange-registry.ts';
+export type {
+  DeclareExchangeOptions,
+  ExchangeRegistryHooks,
+} from './exchange-registry.ts';
 export { BindingStore } from './binding-store.ts';
-export type { BindingStoreOptions } from './binding-store.ts';
+export type {
+  BindingStoreOptions,
+  BindingStoreHooks,
+} from './binding-store.ts';
 export { MessageStore } from './message-store.ts';
 export type { MessageStoreOptions } from './message-store.ts';
 export {
@@ -41,6 +47,7 @@ export { Channel } from './channel.ts';
 export type {
   ChannelState,
   ChannelDeps,
+  ChannelHooks,
   GetOptions,
   CheckQueueResult,
   DequeueResult,
@@ -48,5 +55,19 @@ export type {
 export { Connection, createConnection } from './connection.ts';
 export type { ConnectionState, ConnectionDeps } from './connection.ts';
 export { ConsumerRegistry } from './consumer-registry.ts';
-export type { ConsumeOptions, ConsumerEntry } from './consumer-registry.ts';
+export type {
+  ConsumeOptions,
+  ConsumerEntry,
+  ConsumerRegistryHooks,
+} from './consumer-registry.ts';
 export { Dispatcher } from './dispatcher.ts';
+export { runHooked } from './hook-runner.ts';
+export { QueueRegistry } from './queue-registry.ts';
+export type {
+  DeclareQueueOptions,
+  DeleteQueueOptions,
+  QueueDeclareOk,
+  QueueDeleteOk,
+  QueueRegistryOptions,
+  QueueRegistryHooks,
+} from './queue-registry.ts';

@@ -1,1 +1,105 @@
-export {};
+// Decisions
+export type {
+  ProceedDecision,
+  DelayDecision,
+  FailDecision,
+  ShortCircuitDecision,
+  PreDecision,
+  TransformDecision,
+  PostDecision,
+} from './decisions.ts';
+export { decide } from './decisions.ts';
+
+// Hook generic types
+export type { PreHook, PostHook, Hook } from './hook.ts';
+
+// IBI context/result types
+export type {
+  PublishCtx,
+  PublishMeta,
+  PublishResult,
+  ConsumeCtx,
+  ConsumeMeta,
+  ConsumeResult,
+  GetCtx,
+  GetMeta,
+  GetResult,
+  CancelCtx,
+  CancelMeta,
+  CancelResult,
+  AckCtx,
+  AckMeta,
+  AckResult,
+  NackCtx,
+  NackMeta,
+  NackResult,
+  RejectCtx,
+  RejectResult,
+  RecoverCtx,
+  RecoverMeta,
+  RecoverResult,
+  ExchangeDeclareCtx,
+  ExchangeDeclareMeta,
+  ExchangeDeclareResult,
+  CheckExchangeCtx,
+  CheckExchangeMeta,
+  CheckExchangeResult,
+  ExchangeDeleteCtx,
+  ExchangeDeleteMeta,
+  ExchangeDeleteResult,
+  ExchangeBindCtx,
+  ExchangeBindMeta,
+  ExchangeBindResult,
+  ExchangeUnbindCtx,
+  ExchangeUnbindResult,
+  QueueDeclareCtx,
+  QueueDeclareMeta,
+  QueueDeclareResult,
+  CheckQueueCtx,
+  CheckQueueMeta,
+  CheckQueueResult,
+  QueueDeleteCtx,
+  QueueDeleteMeta,
+  QueueDeleteResult,
+  QueueBindCtx,
+  QueueBindMeta,
+  QueueBindResult,
+  QueueUnbindCtx,
+  QueueUnbindResult,
+  PurgeCtx,
+  PurgeMeta,
+  PurgeResult,
+  PrefetchCtx,
+  PrefetchMeta,
+  PrefetchResult,
+  ConfirmSelectCtx,
+  ConfirmSelectMeta,
+  ConfirmSelectResult,
+} from './ibi.ts';
+
+// OBI context/result types
+export type {
+  TimeCtx,
+  TimeResult,
+  TimerSetCtx,
+  TimerHandle,
+  TimerSetResult,
+  TimerFireCtx,
+  TimerFireResult,
+  RandomCtx,
+  RandomResult,
+  DeliveryCtx,
+  DeliveryMeta,
+  DeliveryResult,
+  ReturnCtx,
+  ReturnResult,
+  PersistCtx,
+  PersistResult,
+} from './obi.ts';
+
+// Hook collection interfaces
+export type {
+  RabbitInboundHooks,
+  RabbitOutboundHooks,
+  RabbitHooks,
+} from './hooks.ts';

@@ -1,5 +1,13 @@
 import type { DeliveredMessage } from './types/message.ts';
+import type {
+  Hook,
+  ConsumeCtx,
+  ConsumeResult as SbiConsumeResult,
+  CancelCtx,
+  CancelResult as SbiCancelResult,
+} from '@rabbitbox/sbi';
 import { channelError, connectionError } from './errors/factories.ts';
+import { runHooked } from './hook-runner.ts';
 
 /** AMQP class/method IDs for basic operations. */
 const BASIC_CLASS = 60;
@@ -23,11 +31,19 @@ export interface ConsumerEntry {
   unackedCount: number;
 }
 
+/** Optional hooks for consumer registry operations. */
+export interface ConsumerRegistryHooks {
+  readonly consume?: Hook<ConsumeCtx, SbiConsumeResult>;
+  readonly cancel?: Hook<CancelCtx, SbiCancelResult>;
+}
+
 export interface ConsumerRegistryOptions {
   /** Check if a queue exists before registering a consumer. */
   readonly queueExists?: (name: string) => boolean;
   /** Generate a consumer tag. */
   readonly generateTag?: () => string;
+  /** Optional hooks for SBI integration. */
+  readonly hooks?: ConsumerRegistryHooks;
 }
 
 function createTagGenerator(): () => string {
@@ -46,10 +62,12 @@ export class ConsumerRegistry {
   private readonly byQueue = new Map<string, ConsumerEntry[]>();
   private readonly generateTag: () => string;
   private readonly queueExists: ((name: string) => boolean) | undefined;
+  private readonly hooks: ConsumerRegistryHooks;
 
   constructor(options?: ConsumerRegistryOptions) {
     this.generateTag = options?.generateTag ?? createTagGenerator();
     this.queueExists = options?.queueExists;
+    this.hooks = options?.hooks ?? {};
   }
 
   /**
@@ -63,62 +81,77 @@ export class ConsumerRegistry {
     callback: (msg: DeliveredMessage) => void,
     options: ConsumeOptions
   ): string {
-    // Validate queue exists
-    if (this.queueExists && !this.queueExists(queueName)) {
-      throw channelError.notFound(
-        `no queue '${queueName}' in vhost '/'`,
-        BASIC_CLASS,
-        BASIC_CONSUME
-      );
-    }
-
     const consumerTag = options.consumerTag || this.generateTag();
-
-    // Reject duplicate tag — real RabbitMQ raises NOT_ALLOWED (530) connection error
-    if (this.byTag.has(consumerTag)) {
-      throw connectionError.notAllowed(
-        `attempt to reuse consumer tag '${consumerTag}'`,
-        BASIC_CLASS,
-        BASIC_CONSUME
-      );
-    }
-
     const exclusive = options.exclusive ?? false;
     const noAck = options.noAck ?? false;
-
     const queueConsumers = this.byQueue.get(queueName) ?? [];
 
-    // Exclusive validation
-    if (exclusive && queueConsumers.length > 0) {
-      throw channelError.accessRefused(
-        `cannot obtain exclusive access to queue '${queueName}'`,
-        BASIC_CLASS,
-        BASIC_CONSUME
-      );
-    }
-    if (queueConsumers.length > 0 && queueConsumers.some((c) => c.exclusive)) {
-      throw channelError.accessRefused(
-        `queue '${queueName}' has an exclusive consumer`,
-        BASIC_CLASS,
-        BASIC_CONSUME
-      );
-    }
-
-    const entry: ConsumerEntry = {
+    const ctx: ConsumeCtx = {
+      queue: queueName,
       consumerTag,
-      queueName,
-      channelNumber,
-      callback,
       noAck,
       exclusive,
-      unackedCount: 0,
+      meta: {
+        queueExists: this.queueExists ? this.queueExists(queueName) : true,
+        queueMessageCount: 0,
+        existingConsumerCount: queueConsumers.length,
+      },
     };
 
-    this.byTag.set(consumerTag, entry);
-    queueConsumers.push(entry);
-    this.byQueue.set(queueName, queueConsumers);
+    return runHooked(this.hooks.consume, ctx, () => {
+      // Validate queue exists
+      if (this.queueExists && !this.queueExists(queueName)) {
+        throw channelError.notFound(
+          `no queue '${queueName}' in vhost '/'`,
+          BASIC_CLASS,
+          BASIC_CONSUME
+        );
+      }
 
-    return consumerTag;
+      // Reject duplicate tag — real RabbitMQ raises NOT_ALLOWED (530) connection error
+      if (this.byTag.has(consumerTag)) {
+        throw connectionError.notAllowed(
+          `attempt to reuse consumer tag '${consumerTag}'`,
+          BASIC_CLASS,
+          BASIC_CONSUME
+        );
+      }
+
+      // Exclusive validation
+      if (exclusive && queueConsumers.length > 0) {
+        throw channelError.accessRefused(
+          `cannot obtain exclusive access to queue '${queueName}'`,
+          BASIC_CLASS,
+          BASIC_CONSUME
+        );
+      }
+      if (
+        queueConsumers.length > 0 &&
+        queueConsumers.some((c) => c.exclusive)
+      ) {
+        throw channelError.accessRefused(
+          `queue '${queueName}' has an exclusive consumer`,
+          BASIC_CLASS,
+          BASIC_CONSUME
+        );
+      }
+
+      const entry: ConsumerEntry = {
+        consumerTag,
+        queueName,
+        channelNumber,
+        callback,
+        noAck,
+        exclusive,
+        unackedCount: 0,
+      };
+
+      this.byTag.set(consumerTag, entry);
+      queueConsumers.push(entry);
+      this.byQueue.set(queueName, queueConsumers);
+
+      return { consumerTag };
+    }).consumerTag;
   }
 
   /**
@@ -127,6 +160,31 @@ export class ConsumerRegistry {
    * @returns The cancelled consumer entry, or undefined if not found.
    */
   cancel(consumerTag: string): ConsumerEntry | undefined {
+    const existing = this.byTag.get(consumerTag);
+    const ctx: CancelCtx = {
+      consumerTag,
+      meta: {
+        consumerExists: existing !== undefined,
+        queue: existing?.queueName ?? '',
+      },
+    };
+
+    // Perform the actual cancel operation
+    if (!this.hooks.cancel) {
+      return this.doCancel(consumerTag);
+    }
+
+    runHooked(this.hooks.cancel, ctx, () => {
+      this.doCancel(consumerTag);
+      return { consumerTag };
+    });
+
+    // The entry was already removed by doCancel; return original existing
+    return existing;
+  }
+
+  /** Internal cancel implementation. */
+  private doCancel(consumerTag: string): ConsumerEntry | undefined {
     const entry = this.byTag.get(consumerTag);
     if (!entry) return undefined;
 

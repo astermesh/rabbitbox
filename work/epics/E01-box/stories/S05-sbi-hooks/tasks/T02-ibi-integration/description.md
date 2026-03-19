@@ -1,5 +1,7 @@
 # T02: IBI Hook Integration
 
+**Status:** done
+
 Wire all 21 inbound hooks into eng operations.
 
 ## Scope

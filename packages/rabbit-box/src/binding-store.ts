@@ -1,10 +1,30 @@
 import type { Binding } from './types/binding.ts';
+import type {
+  Hook,
+  QueueBindCtx,
+  QueueBindResult,
+  QueueUnbindCtx,
+  QueueUnbindResult,
+  ExchangeBindCtx,
+  ExchangeBindResult,
+  ExchangeUnbindCtx,
+  ExchangeUnbindResult,
+} from '@rabbitbox/sbi';
 import { channelError } from './errors/factories.ts';
+import { runHooked } from './hook-runner.ts';
 
 /** AMQP class/method IDs for queue.bind / queue.unbind. */
 const QUEUE_CLASS_ID = 50;
 const QUEUE_BIND_METHOD_ID = 20;
 const QUEUE_UNBIND_METHOD_ID = 50;
+
+/** Optional hooks for binding operations. */
+export interface BindingStoreHooks {
+  readonly queueBind?: Hook<QueueBindCtx, QueueBindResult>;
+  readonly queueUnbind?: Hook<QueueUnbindCtx, QueueUnbindResult>;
+  readonly exchangeBind?: Hook<ExchangeBindCtx, ExchangeBindResult>;
+  readonly exchangeUnbind?: Hook<ExchangeUnbindCtx, ExchangeUnbindResult>;
+}
 
 /** Options for constructing a BindingStore. */
 export interface BindingStoreOptions {
@@ -12,6 +32,8 @@ export interface BindingStoreOptions {
   readonly hasExchange?: (name: string) => boolean;
   /** Returns true if the named queue exists. */
   readonly hasQueue?: (name: string) => boolean;
+  /** Optional hooks for SBI integration. */
+  readonly hooks?: BindingStoreHooks;
 }
 
 /**
@@ -73,10 +95,12 @@ export class BindingStore {
   private readonly byExchange = new Map<string, Binding[]>();
   private readonly hasExchangeFn: ((name: string) => boolean) | undefined;
   private readonly hasQueueFn: ((name: string) => boolean) | undefined;
+  private readonly hooks: BindingStoreHooks;
 
   constructor(options?: BindingStoreOptions) {
     this.hasExchangeFn = options?.hasExchange;
     this.hasQueueFn = options?.hasQueue;
+    this.hooks = options?.hooks ?? {};
   }
 
   /**
@@ -92,39 +116,54 @@ export class BindingStore {
     routingKey: string,
     args: Record<string, unknown>
   ): void {
-    if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
-      throw channelError.notFound(
-        `no exchange '${exchange}' in vhost '/'`,
-        QUEUE_CLASS_ID,
-        QUEUE_BIND_METHOD_ID
-      );
-    }
-    if (this.hasQueueFn && !this.hasQueueFn(queue)) {
-      throw channelError.notFound(
-        `no queue '${queue}' in vhost '/'`,
-        QUEUE_CLASS_ID,
-        QUEUE_BIND_METHOD_ID
-      );
-    }
-
-    const binding: Binding = {
-      exchange,
+    const ctx: QueueBindCtx = {
       queue,
+      exchange,
       routingKey,
-      arguments: { ...args },
+      arguments: args,
+      meta: {
+        queueExists: this.hasQueueFn ? this.hasQueueFn(queue) : true,
+        exchangeExists: this.hasExchangeFn
+          ? this.hasExchangeFn(exchange)
+          : true,
+      },
     };
 
-    let list = this.byExchange.get(exchange);
-    if (!list) {
-      list = [];
-      this.byExchange.set(exchange, list);
-    }
+    runHooked(this.hooks.queueBind, ctx, () => {
+      if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
+        throw channelError.notFound(
+          `no exchange '${exchange}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_BIND_METHOD_ID
+        );
+      }
+      if (this.hasQueueFn && !this.hasQueueFn(queue)) {
+        throw channelError.notFound(
+          `no queue '${queue}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_BIND_METHOD_ID
+        );
+      }
 
-    // Idempotent: check for duplicate
-    const duplicate = list.some((b) => bindingsMatch(b, binding));
-    if (duplicate) return;
+      const binding: Binding = {
+        exchange,
+        queue,
+        routingKey,
+        arguments: { ...args },
+      };
 
-    list.push(binding);
+      let list = this.byExchange.get(exchange);
+      if (!list) {
+        list = [];
+        this.byExchange.set(exchange, list);
+      }
+
+      // Idempotent: check for duplicate
+      const duplicate = list.some((b) => bindingsMatch(b, binding));
+      if (duplicate) return;
+
+      list.push(binding);
+    });
   }
 
   /**
@@ -140,32 +179,163 @@ export class BindingStore {
     routingKey: string,
     args: Record<string, unknown>
   ): void {
-    if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
-      throw channelError.notFound(
-        `no exchange '${exchange}' in vhost '/'`,
-        QUEUE_CLASS_ID,
-        QUEUE_UNBIND_METHOD_ID
-      );
-    }
-    if (this.hasQueueFn && !this.hasQueueFn(queue)) {
-      throw channelError.notFound(
-        `no queue '${queue}' in vhost '/'`,
-        QUEUE_CLASS_ID,
-        QUEUE_UNBIND_METHOD_ID
-      );
-    }
+    const ctx: QueueUnbindCtx = {
+      queue,
+      exchange,
+      routingKey,
+      arguments: args,
+      meta: {
+        queueExists: this.hasQueueFn ? this.hasQueueFn(queue) : true,
+        exchangeExists: this.hasExchangeFn
+          ? this.hasExchangeFn(exchange)
+          : true,
+      },
+    };
 
-    const list = this.byExchange.get(exchange);
-    if (!list) return;
+    runHooked(this.hooks.queueUnbind, ctx, () => {
+      if (this.hasExchangeFn && !this.hasExchangeFn(exchange)) {
+        throw channelError.notFound(
+          `no exchange '${exchange}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_UNBIND_METHOD_ID
+        );
+      }
+      if (this.hasQueueFn && !this.hasQueueFn(queue)) {
+        throw channelError.notFound(
+          `no queue '${queue}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_UNBIND_METHOD_ID
+        );
+      }
 
-    const target: Binding = { exchange, queue, routingKey, arguments: args };
-    const idx = list.findIndex((b) => bindingsMatch(b, target));
-    if (idx === -1) return;
+      const list = this.byExchange.get(exchange);
+      if (!list) return;
 
-    list.splice(idx, 1);
-    if (list.length === 0) {
-      this.byExchange.delete(exchange);
-    }
+      const target: Binding = { exchange, queue, routingKey, arguments: args };
+      const idx = list.findIndex((b) => bindingsMatch(b, target));
+      if (idx === -1) return;
+
+      list.splice(idx, 1);
+      if (list.length === 0) {
+        this.byExchange.delete(exchange);
+      }
+    });
+  }
+
+  /**
+   * Add an exchange-to-exchange binding (exchange.bind).
+   * Same mechanics as queue binding but both endpoints are exchanges.
+   */
+  addExchangeBinding(
+    destination: string,
+    source: string,
+    routingKey: string,
+    args: Record<string, unknown>
+  ): void {
+    const ctx: ExchangeBindCtx = {
+      destination,
+      source,
+      routingKey,
+      arguments: args,
+      meta: {
+        destinationExists: this.hasExchangeFn
+          ? this.hasExchangeFn(destination)
+          : true,
+        sourceExists: this.hasExchangeFn ? this.hasExchangeFn(source) : true,
+      },
+    };
+
+    runHooked(this.hooks.exchangeBind, ctx, () => {
+      if (this.hasExchangeFn && !this.hasExchangeFn(source)) {
+        throw channelError.notFound(
+          `no exchange '${source}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_BIND_METHOD_ID
+        );
+      }
+      if (this.hasExchangeFn && !this.hasExchangeFn(destination)) {
+        throw channelError.notFound(
+          `no exchange '${destination}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_BIND_METHOD_ID
+        );
+      }
+
+      const binding: Binding = {
+        exchange: source,
+        queue: destination, // reuse Binding shape; "queue" field holds destination exchange
+        routingKey,
+        arguments: { ...args },
+      };
+
+      let list = this.byExchange.get(source);
+      if (!list) {
+        list = [];
+        this.byExchange.set(source, list);
+      }
+
+      const duplicate = list.some((b) => bindingsMatch(b, binding));
+      if (duplicate) return;
+
+      list.push(binding);
+    });
+  }
+
+  /**
+   * Remove an exchange-to-exchange binding (exchange.unbind).
+   */
+  removeExchangeBinding(
+    destination: string,
+    source: string,
+    routingKey: string,
+    args: Record<string, unknown>
+  ): void {
+    const ctx: ExchangeUnbindCtx = {
+      destination,
+      source,
+      routingKey,
+      arguments: args,
+      meta: {
+        destinationExists: this.hasExchangeFn
+          ? this.hasExchangeFn(destination)
+          : true,
+        sourceExists: this.hasExchangeFn ? this.hasExchangeFn(source) : true,
+      },
+    };
+
+    runHooked(this.hooks.exchangeUnbind, ctx, () => {
+      if (this.hasExchangeFn && !this.hasExchangeFn(source)) {
+        throw channelError.notFound(
+          `no exchange '${source}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_UNBIND_METHOD_ID
+        );
+      }
+      if (this.hasExchangeFn && !this.hasExchangeFn(destination)) {
+        throw channelError.notFound(
+          `no exchange '${destination}' in vhost '/'`,
+          QUEUE_CLASS_ID,
+          QUEUE_UNBIND_METHOD_ID
+        );
+      }
+
+      const list = this.byExchange.get(source);
+      if (!list) return;
+
+      const target: Binding = {
+        exchange: source,
+        queue: destination,
+        routingKey,
+        arguments: args,
+      };
+      const idx = list.findIndex((b) => bindingsMatch(b, target));
+      if (idx === -1) return;
+
+      list.splice(idx, 1);
+      if (list.length === 0) {
+        this.byExchange.delete(source);
+      }
+    });
   }
 
   /** Return all bindings for an exchange (defensive copy). */

@@ -1,5 +1,15 @@
 import type { Exchange, ExchangeType } from './types/exchange.ts';
+import type {
+  Hook,
+  ExchangeDeclareCtx,
+  ExchangeDeclareResult,
+  CheckExchangeCtx,
+  CheckExchangeResult,
+  ExchangeDeleteCtx,
+  ExchangeDeleteResult,
+} from '@rabbitbox/sbi';
 import { channelError } from './errors/factories.ts';
+import { runHooked } from './hook-runner.ts';
 
 /** AMQP class/method IDs for exchange operations. */
 const EXCHANGE_CLASS_ID = 40;
@@ -115,14 +125,26 @@ function findMismatch(
  *
  * Pre-declares the six default RabbitMQ exchanges on construction.
  */
+/** Optional hooks for exchange registry operations. */
+export interface ExchangeRegistryHooks {
+  readonly exchangeDeclare?: Hook<ExchangeDeclareCtx, ExchangeDeclareResult>;
+  readonly checkExchange?: Hook<CheckExchangeCtx, CheckExchangeResult>;
+  readonly exchangeDelete?: Hook<ExchangeDeleteCtx, ExchangeDeleteResult>;
+}
+
 export class ExchangeRegistry {
   private readonly exchanges = new Map<string, Exchange>();
   private readonly bindingCountFn:
     | ((exchangeName: string) => number)
     | undefined;
+  private readonly hooks: ExchangeRegistryHooks;
 
-  constructor(options?: { bindingCount?: (exchangeName: string) => number }) {
+  constructor(options?: {
+    bindingCount?: (exchangeName: string) => number;
+    hooks?: ExchangeRegistryHooks;
+  }) {
     this.bindingCountFn = options?.bindingCount;
+    this.hooks = options?.hooks ?? {};
     this.initDefaults();
   }
 
@@ -132,41 +154,57 @@ export class ExchangeRegistry {
     type: ExchangeType,
     opts: DeclareExchangeOptions = {}
   ): Exchange {
-    const existing = this.exchanges.get(name);
-
-    if (existing) {
-      const mismatch = findMismatch(existing, type, opts);
-      if (!mismatch) {
-        return existing;
-      }
-
-      throw channelError.preconditionFailed(
-        `inequivalent arg '${mismatch.field}' for exchange '${name}' in vhost '/': received ${mismatch.received} but current is ${mismatch.current}`,
-        EXCHANGE_CLASS_ID,
-        EXCHANGE_DECLARE_METHOD_ID
-      );
-    }
-
-    // New exchange with reserved prefix: ACCESS_REFUSED
-    if (isReservedPrefix(name)) {
-      throw channelError.accessRefused(
-        `exchange name '${name}' contains reserved prefix 'amq.*'`,
-        EXCHANGE_CLASS_ID,
-        EXCHANGE_DECLARE_METHOD_ID
-      );
-    }
-
-    const exchange: Exchange = {
+    const ctx: ExchangeDeclareCtx = {
       name,
       type,
       durable: opts.durable ?? true,
       autoDelete: opts.autoDelete ?? false,
       internal: opts.internal ?? false,
       arguments: opts.arguments ?? {},
+      meta: {
+        alreadyExists: this.exchanges.has(name),
+      },
     };
 
-    this.exchanges.set(name, exchange);
-    return exchange;
+    runHooked(this.hooks.exchangeDeclare, ctx, () => {
+      const existing = this.exchanges.get(name);
+
+      if (existing) {
+        const mismatch = findMismatch(existing, type, opts);
+        if (!mismatch) {
+          return;
+        }
+
+        throw channelError.preconditionFailed(
+          `inequivalent arg '${mismatch.field}' for exchange '${name}' in vhost '/': received ${mismatch.received} but current is ${mismatch.current}`,
+          EXCHANGE_CLASS_ID,
+          EXCHANGE_DECLARE_METHOD_ID
+        );
+      }
+
+      // New exchange with reserved prefix: ACCESS_REFUSED
+      if (isReservedPrefix(name)) {
+        throw channelError.accessRefused(
+          `exchange name '${name}' contains reserved prefix 'amq.*'`,
+          EXCHANGE_CLASS_ID,
+          EXCHANGE_DECLARE_METHOD_ID
+        );
+      }
+
+      const exchange: Exchange = {
+        name,
+        type,
+        durable: opts.durable ?? true,
+        autoDelete: opts.autoDelete ?? false,
+        internal: opts.internal ?? false,
+        arguments: opts.arguments ?? {},
+      };
+
+      this.exchanges.set(name, exchange);
+    });
+
+    // Return the exchange (may be existing or newly created)
+    return this.exchanges.get(name) as Exchange;
   }
 
   /**
@@ -175,34 +213,44 @@ export class ExchangeRegistry {
    * @param ifUnused - If true, only delete if the exchange has no bindings.
    */
   deleteExchange(name: string, ifUnused = false): void {
-    if (DEFAULT_EXCHANGE_NAMES.has(name)) {
-      throw channelError.accessRefused(
-        `cannot delete exchange '${name}': it is a pre-declared exchange`,
-        EXCHANGE_CLASS_ID,
-        EXCHANGE_DELETE_METHOD_ID
-      );
-    }
+    const ctx: ExchangeDeleteCtx = {
+      name,
+      ifUnused,
+      meta: {
+        exists: this.exchanges.has(name),
+      },
+    };
 
-    const existing = this.exchanges.get(name);
-
-    // RabbitMQ (since 3.0) silently returns delete-ok for non-existent exchanges,
-    // deviating from the AMQP 0-9-1 spec which requires NOT_FOUND.
-    if (!existing) {
-      return;
-    }
-
-    if (ifUnused) {
-      const count = this.bindingCountFn ? this.bindingCountFn(name) : 0;
-      if (count > 0) {
-        throw channelError.preconditionFailed(
-          `exchange '${name}' has ${count} binding(s)`,
+    runHooked(this.hooks.exchangeDelete, ctx, () => {
+      if (DEFAULT_EXCHANGE_NAMES.has(name)) {
+        throw channelError.accessRefused(
+          `cannot delete exchange '${name}': it is a pre-declared exchange`,
           EXCHANGE_CLASS_ID,
           EXCHANGE_DELETE_METHOD_ID
         );
       }
-    }
 
-    this.exchanges.delete(name);
+      const existing = this.exchanges.get(name);
+
+      // RabbitMQ (since 3.0) silently returns delete-ok for non-existent exchanges,
+      // deviating from the AMQP 0-9-1 spec which requires NOT_FOUND.
+      if (!existing) {
+        return;
+      }
+
+      if (ifUnused) {
+        const count = this.bindingCountFn ? this.bindingCountFn(name) : 0;
+        if (count > 0) {
+          throw channelError.preconditionFailed(
+            `exchange '${name}' has ${count} binding(s)`,
+            EXCHANGE_CLASS_ID,
+            EXCHANGE_DELETE_METHOD_ID
+          );
+        }
+      }
+
+      this.exchanges.delete(name);
+    });
   }
 
   /**
@@ -211,15 +259,25 @@ export class ExchangeRegistry {
    * Throws NOT_FOUND channel error if the exchange does not exist.
    */
   checkExchange(name: string): Exchange {
-    const existing = this.exchanges.get(name);
-    if (!existing) {
-      throw channelError.notFound(
-        `no exchange '${name}' in vhost '/'`,
-        EXCHANGE_CLASS_ID,
-        EXCHANGE_DECLARE_METHOD_ID
-      );
-    }
-    return existing;
+    const ctx: CheckExchangeCtx = {
+      name,
+      meta: {
+        exists: this.exchanges.has(name),
+      },
+    };
+
+    runHooked(this.hooks.checkExchange, ctx, () => {
+      const existing = this.exchanges.get(name);
+      if (!existing) {
+        throw channelError.notFound(
+          `no exchange '${name}' in vhost '/'`,
+          EXCHANGE_CLASS_ID,
+          EXCHANGE_DECLARE_METHOD_ID
+        );
+      }
+    });
+
+    return this.exchanges.get(name) as Exchange;
   }
 
   /** Get an exchange by name, or undefined if not found. */
