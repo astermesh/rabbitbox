@@ -1,5 +1,7 @@
 # T04: Polling & Recovery
 
+**Status:** done
+
 Implement basic.get (polling), basic.recover, and passive declares.
 
 ## Scope

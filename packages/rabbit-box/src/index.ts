@@ -36,6 +36,12 @@ export {
 export { publish } from './publish.ts';
 export type { PublishResult, PublishOptions } from './publish.ts';
 export { Channel } from './channel.ts';
-export type { ChannelState, ChannelDeps } from './channel.ts';
+export type {
+  ChannelState,
+  ChannelDeps,
+  GetOptions,
+  CheckQueueResult,
+  DequeueResult,
+} from './channel.ts';
 export { Connection, createConnection } from './connection.ts';
 export type { ConnectionState, ConnectionDeps } from './connection.ts';
