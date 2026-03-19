@@ -182,7 +182,9 @@ export class BindingStore {
   ): void {
     const list = this.byExchange.get(exchange);
     const target: Binding = { exchange, queue, routingKey, arguments: args };
-    const bindingExists = list ? list.some((b) => bindingsMatch(b, target)) : false;
+    const bindingExists = list
+      ? list.some((b) => bindingsMatch(b, target))
+      : false;
 
     const ctx: QueueUnbindCtx = {
       queue,

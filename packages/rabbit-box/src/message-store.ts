@@ -2,6 +2,8 @@ import type { BrokerMessage } from './types/message.ts';
 
 export interface MessageStoreOptions {
   readonly messageTtl?: number;
+  /** Time provider for timestamps. Defaults to Date.now(). */
+  readonly now?: () => number;
 }
 
 /**
@@ -14,14 +16,16 @@ export class MessageStore {
   private messages: BrokerMessage[] = [];
   private totalByteSize = 0;
   private readonly messageTtl: number | undefined;
+  private readonly now: () => number;
 
   constructor(options?: MessageStoreOptions) {
     this.messageTtl = options?.messageTtl;
+    this.now = options?.now ?? (() => Date.now());
   }
 
   /** Add message to tail. Sets enqueuedAt and computes expiresAt from TTL. */
   enqueue(message: BrokerMessage): BrokerMessage {
-    const enqueuedAt = Date.now();
+    const enqueuedAt = this.now();
     const expiresAt = this.computeExpiresAt(enqueuedAt, message);
 
     const stored: BrokerMessage = {

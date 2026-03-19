@@ -61,6 +61,7 @@ export type {
   ConsumerRegistryHooks,
 } from './consumer-registry.ts';
 export { Dispatcher } from './dispatcher.ts';
+export type { DispatcherOptions } from './dispatcher.ts';
 export { runHooked } from './hook-runner.ts';
 export { QueueRegistry } from './queue-registry.ts';
 export type {
@@ -71,3 +72,22 @@ export type {
   QueueRegistryOptions,
   QueueRegistryHooks,
 } from './queue-registry.ts';
+export type {
+  ObiTime,
+  ObiTimers,
+  ObiRandom,
+  ObiDelivery,
+  ReturnContext,
+  ObiReturn,
+  ObiPersist,
+  ObiHooks,
+} from './obi/index.ts';
+export {
+  createDefaultTime,
+  createDefaultTimers,
+  createDefaultRandom,
+  createDefaultDelivery,
+  createDefaultReturn,
+  createDefaultPersist,
+  createDefaultObiHooks,
+} from './obi/index.ts';

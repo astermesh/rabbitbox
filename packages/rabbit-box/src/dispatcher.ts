@@ -10,13 +10,20 @@ import type { DeliveredMessage, BrokerMessage } from './types/message.ts';
  * rotating fairly across consumers and respecting both per-consumer and
  * per-channel prefetch limits.
  */
+export interface DispatcherOptions {
+  /** Async delivery scheduler. Defaults to queueMicrotask(). */
+  readonly schedule?: (callback: () => void) => void;
+}
+
 export class Dispatcher {
   private readonly registry: ConsumerRegistry;
   /** Per-queue round-robin index. */
   private readonly rrIndex = new Map<string, number>();
+  private readonly schedule: (callback: () => void) => void;
 
-  constructor(registry: ConsumerRegistry) {
+  constructor(registry: ConsumerRegistry, options?: DispatcherOptions) {
     this.registry = registry;
+    this.schedule = options?.schedule ?? ((cb) => queueMicrotask(cb));
   }
 
   /**
@@ -143,6 +150,6 @@ export class Dispatcher {
       properties: message.properties,
     };
 
-    queueMicrotask(() => consumer.callback(delivered));
+    this.schedule(() => consumer.callback(delivered));
   }
 }

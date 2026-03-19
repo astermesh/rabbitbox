@@ -214,7 +214,7 @@ export function publish(opts: PublishOptions): PublishResult {
         mandatory,
         immediate,
         deliveryCount: 0,
-        enqueuedAt: Date.now(),
+        enqueuedAt: 0, // MessageStore.enqueue() overwrites with its own now()
         priority: cleanProperties.priority ?? 0,
       };
       store.enqueue(message);
