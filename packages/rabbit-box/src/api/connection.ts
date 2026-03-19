@@ -24,6 +24,7 @@ export interface BrokerState {
 
 export class ApiConnection extends EventEmitter<ConnectionEvents> {
   readonly connectionId: string;
+  readonly username: string;
   private readonly state: BrokerState;
   private readonly channels = new Map<
     number,
@@ -33,10 +34,17 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
   private nextChannelNum = 0;
   private closed = false;
 
-  constructor(connectionId: string, state: BrokerState) {
+  constructor(connectionId: string, state: BrokerState, username = 'guest') {
     super();
     this.connectionId = connectionId;
     this.state = state;
+    this.username = username;
+  }
+
+  /** Create a new connection sharing the same broker state. */
+  createConnection(username?: string): ApiConnection {
+    const id = `${this.connectionId}-conn-${Date.now()}`;
+    return new ApiConnection(id, this.state, username ?? this.username);
   }
 
   async createChannel(): Promise<ApiChannel> {
@@ -80,6 +88,7 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       registerExclusiveQueue: (name) => this.registerExclusiveQueue(name),
       removeMessageStore: (name) => this.state.messageStores.delete(name),
       getAllQueueNames: () => this.state.messageStores.keys(),
+      authenticatedUserId: this.username,
     });
 
     this.channels.set(num, { api: apiChannel, internal });

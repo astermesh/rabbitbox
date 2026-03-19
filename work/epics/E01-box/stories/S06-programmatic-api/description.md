@@ -1,5 +1,7 @@
 # S06: Programmatic API & Integration
 
+**Status:** done
+
 Design and implement the clean public API surface for RabbitBox, plus comprehensive end-to-end integration tests.
 
 ## Scope

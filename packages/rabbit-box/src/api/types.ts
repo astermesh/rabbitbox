@@ -5,6 +5,8 @@ import type { MessageProperties } from '../types/message.ts';
 /** Options for RabbitBox.create(). */
 export interface RabbitBoxOptions {
   readonly hooks?: Partial<RabbitHooks>;
+  /** Authenticated username for user-id validation (default: 'guest'). */
+  readonly username?: string;
   /** Reserved for future multi-vhost support. */
   readonly vhost?: string;
 }
