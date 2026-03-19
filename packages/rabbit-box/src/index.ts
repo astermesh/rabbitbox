@@ -91,3 +91,26 @@ export {
   createDefaultPersist,
   createDefaultObiHooks,
 } from './obi/index.ts';
+
+// Public API
+export { RabbitBox } from './api/rabbit-box.ts';
+export { ApiConnection } from './api/connection.ts';
+export { ApiChannel } from './api/channel.ts';
+export { EventEmitter } from './api/event-emitter.ts';
+export type {
+  RabbitBoxOptions,
+  AssertExchangeOptions,
+  AssertExchangeResult,
+  DeleteExchangeOptions,
+  AssertQueueOptions,
+  AssertQueueResult,
+  DeleteQueueOptions as ApiDeleteQueueOptions,
+  PurgeResult,
+  PublishMessageOptions,
+  ConsumeOptions as ApiConsumeOptions,
+  ConsumeResult as ApiConsumeResult,
+  GetOptions as ApiGetOptions,
+  ConnectionEvents,
+  ChannelEvents,
+  ReturnedMessage,
+} from './api/types.ts';

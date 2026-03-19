@@ -1,5 +1,7 @@
 # T01: Public API Surface
 
+**Status:** done
+
 Design and implement the public-facing API for RabbitBox.
 
 ## Scope
