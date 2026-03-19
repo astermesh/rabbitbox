@@ -77,6 +77,8 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       onClose: (channelNumber) => {
         this.channels.delete(channelNumber);
       },
+      registerExclusiveQueue: (name) => this.registerExclusiveQueue(name),
+      removeMessageStore: (name) => this.state.messageStores.delete(name),
       getAllQueueNames: () => this.state.messageStores.keys(),
     });
 

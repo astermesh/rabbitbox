@@ -21,6 +21,14 @@ export class EventEmitter<Events> {
     return this;
   }
 
+  once<E extends keyof Events>(event: E, listener: Events[E] & Fn): this {
+    const wrapped = ((...args: unknown[]) => {
+      this.off(event, wrapped as Events[E] & Fn);
+      (listener as Fn)(...args);
+    }) as Events[E] & Fn;
+    return this.on(event, wrapped);
+  }
+
   off<E extends keyof Events>(event: E, listener: Events[E] & Fn): this {
     const set = this.listeners.get(event);
     if (set) {

@@ -424,11 +424,10 @@ describe('ApiChannel', () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(msgs).toHaveLength(0);
 
-      // Resume flow
+      // Resume flow — message should be delivered
       await ch.flow(true);
-      // Trigger dispatch after resuming
       await new Promise((r) => setTimeout(r, 20));
-      // Message should eventually be delivered after flow resumes
+      expect(msgs).toHaveLength(1);
     });
   });
 
@@ -456,6 +455,68 @@ describe('ApiChannel', () => {
       await setup();
       await ch.close();
       await expect(ch.assertQueue('test-q')).rejects.toThrow();
+    });
+  });
+
+  describe('exclusive queues', () => {
+    it('exclusive queue is auto-deleted on connection close', async () => {
+      await setup();
+      const result = await ch.assertQueue('excl-q', { exclusive: true });
+      expect(result.queue).toBe('excl-q');
+
+      // Create a second connection to verify the queue is gone after close
+      const conn2 = RabbitBox.create();
+      const ch2 = await conn2.createChannel();
+
+      await conn.close();
+
+      // Queue should no longer exist
+      await expect(ch2.checkQueue('excl-q')).rejects.toThrow(ChannelError);
+      await conn2.close();
+    });
+
+    it('server-named exclusive queue is auto-deleted on connection close', async () => {
+      await setup();
+      const result = await ch.assertQueue('', { exclusive: true });
+      expect(result.queue).toMatch(/^amq\.gen-/);
+
+      const conn2 = RabbitBox.create();
+      const ch2 = await conn2.createChannel();
+
+      await conn.close();
+      await expect(ch2.checkQueue(result.queue)).rejects.toThrow(ChannelError);
+      await conn2.close();
+    });
+  });
+
+  describe('deleteQueue cleanup', () => {
+    it('deleteQueue cancels consumers on that queue', async () => {
+      await setup();
+      await ch.assertQueue('test-q');
+      const msgs: DeliveredMessage[] = [];
+      await ch.consume('test-q', (msg) => msgs.push(msg), { noAck: true });
+
+      await ch.deleteQueue('test-q');
+
+      // Re-create queue and publish — old consumer should not receive
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', new Uint8Array([1]));
+      await new Promise((r) => setTimeout(r, 20));
+      expect(msgs).toHaveLength(0);
+    });
+  });
+
+  describe('once (EventEmitter)', () => {
+    it('once listener fires only once', async () => {
+      await setup();
+      const fn = vi.fn();
+      ch.once('close', fn);
+      await ch.close();
+      // Recreate to close again
+      ch = await (conn = RabbitBox.create()).createChannel();
+      ch.once('close', vi.fn()); // different listener
+      await ch.close();
+      expect(fn).toHaveBeenCalledOnce();
     });
   });
 });

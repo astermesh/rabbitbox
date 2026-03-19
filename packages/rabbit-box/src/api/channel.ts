@@ -39,6 +39,10 @@ export interface ApiChannelDeps {
   readonly getChannel: (channelNumber: number) => Channel | undefined;
   readonly connectionId: string;
   readonly onClose: (channelNumber: number) => void;
+  /** Register an exclusive queue for auto-delete on connection close. */
+  readonly registerExclusiveQueue: (name: string) => void;
+  /** Remove a message store for a deleted queue. */
+  readonly removeMessageStore: (name: string) => void;
   /** Returns all queue names that have message stores. */
   readonly getAllQueueNames: () => Iterable<string>;
 }
@@ -105,6 +109,10 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     );
     // Ensure a message store exists for this queue
     this.deps.getMessageStore(result.queue);
+    // Register exclusive queues for auto-delete on connection close
+    if (options?.exclusive) {
+      this.deps.registerExclusiveQueue(result.queue);
+    }
     return result;
   }
 
@@ -119,6 +127,13 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
       this.deps.connectionId
     );
     this.deps.bindingStore.removeBindingsForQueue(name);
+    // Cancel all consumers on the deleted queue
+    const consumers = this.deps.consumerRegistry.getConsumersForQueue(name);
+    for (const consumer of [...consumers]) {
+      this.deps.consumerRegistry.cancel(consumer.consumerTag);
+    }
+    // Clean up message store
+    this.deps.removeMessageStore(name);
     return result;
   }
 
