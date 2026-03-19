@@ -207,12 +207,9 @@ describe('core domain types', () => {
         callback: () => {},
         noAck: false,
         exclusive: false,
-        prefetchCount: 10,
-        unackedCount: 0,
-        unackedMessages: new Map(),
       };
       expect(consumer.consumerTag).toBe('ctag-1');
-      expect(consumer.prefetchCount).toBe(10);
+      expect(consumer.noAck).toBe(false);
     });
 
     it('tracks unacked messages by delivery tag', () => {
@@ -230,19 +227,10 @@ describe('core domain types', () => {
           priority: 0,
         },
         queueName: 'my-queue',
-      };
-      const consumer: Consumer = {
         consumerTag: 'ctag-1',
-        queueName: 'my-queue',
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        callback: () => {},
-        noAck: false,
-        exclusive: false,
-        prefetchCount: 10,
-        unackedCount: 1,
-        unackedMessages: new Map([[1, unacked]]),
       };
-      expect(consumer.unackedMessages.get(1)).toBe(unacked);
+      expect(unacked.deliveryTag).toBe(1);
+      expect(unacked.consumerTag).toBe('ctag-1');
     });
   });
 
