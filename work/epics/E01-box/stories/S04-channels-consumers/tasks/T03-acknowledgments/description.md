@@ -1,5 +1,7 @@
 # T03: Acknowledgments & Delivery Tracking
 
+**Status:** done
+
 Implement ack, nack, and reject with delivery tag tracking and requeue behavior.
 
 ## Scope
