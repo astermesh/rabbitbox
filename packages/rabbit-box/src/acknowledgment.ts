@@ -145,6 +145,7 @@ export function ack(
       }
       deps.onDispatch(entry.queueName);
     }
+    return undefined;
   });
 }
 
@@ -207,6 +208,7 @@ export function nack(
       }
       processNacked([entry], requeue, deps);
     }
+    return undefined;
   });
 }
 
@@ -250,6 +252,7 @@ export function reject(
       );
     }
     processNacked([entry], requeue, deps);
+    return undefined;
   });
 }
 

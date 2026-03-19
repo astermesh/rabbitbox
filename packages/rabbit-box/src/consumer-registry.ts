@@ -176,7 +176,7 @@ export class ConsumerRegistry {
 
     runHooked(this.hooks.cancel, ctx, () => {
       this.doCancel(consumerTag);
-      return { consumerTag };
+      return undefined;
     });
 
     // The entry was already removed by doCancel; return original existing

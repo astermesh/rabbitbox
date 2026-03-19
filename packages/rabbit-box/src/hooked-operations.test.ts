@@ -111,7 +111,7 @@ describe('publish with hooks', () => {
 
   it('pre-hook fail prevents publish and throws error', () => {
     const hook: Hook<PublishCtx, SbiPublishResult> = {
-      pre: () => ({ action: 'fail', error: new Error('publish blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('publish blocked') }),
     };
     const ctx = setup(hook);
     ctx.exchanges.declareExchange('test', 'direct');
@@ -142,8 +142,8 @@ describe('publish with hooks', () => {
   it('pre-hook short_circuit skips publish and returns specified value', () => {
     const hook: Hook<PublishCtx, SbiPublishResult> = {
       pre: () => ({
-        action: 'short_circuit',
-        value: { routed: true },
+        type: 'short_circuit',
+        result: { routed: true },
       }),
     };
     const ctx = setup(hook);
@@ -171,10 +171,7 @@ describe('publish with hooks', () => {
 
   it('post-hook transform modifies publish result', () => {
     const hook: Hook<PublishCtx, SbiPublishResult> = {
-      post: (_ctx, result) => ({
-        action: 'transform',
-        value: { routed: !result.routed },
-      }),
+      post: (_ctx, result) => ({ routed: !result.routed }),
     };
     const ctx = setup(hook);
     ctx.exchanges.declareExchange('test', 'direct');
@@ -281,7 +278,7 @@ describe('ack/nack/reject with hooks', () => {
 
   it('ack pre-hook fail prevents acknowledgment', () => {
     const hook: Hook<AckCtx, AckResult> = {
-      pre: () => ({ action: 'fail', error: new Error('ack blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('ack blocked') }),
     };
     const { ch, deps } = setupChannel();
 
@@ -307,7 +304,7 @@ describe('ack/nack/reject with hooks', () => {
 
   it('nack pre-hook short_circuit skips nack operation', () => {
     const hook: Hook<NackCtx, NackResult> = {
-      pre: () => ({ action: 'short_circuit', value: undefined }),
+      pre: () => ({ type: 'short_circuit', result: undefined }),
     };
     const { ch, deps, requeued } = setupChannel();
 
@@ -335,7 +332,7 @@ describe('ack/nack/reject with hooks', () => {
 describe('exchange registry with hooks', () => {
   it('exchangeDeclare pre-hook fail prevents declaration', () => {
     const hook: Hook<ExchangeDeclareCtx, ExchangeDeclareResult> = {
-      pre: () => ({ action: 'fail', error: new Error('declare blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('declare blocked') }),
     };
     const registry = new ExchangeRegistry({
       hooks: { exchangeDeclare: hook },
@@ -367,7 +364,7 @@ describe('exchange registry with hooks', () => {
 
   it('exchangeDelete pre-hook fail prevents deletion', () => {
     const hook: Hook<ExchangeDeleteCtx, ExchangeDeleteResult> = {
-      pre: () => ({ action: 'fail', error: new Error('delete blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('delete blocked') }),
     };
     const registry = new ExchangeRegistry({
       hooks: { exchangeDelete: hook },
@@ -384,7 +381,7 @@ describe('exchange registry with hooks', () => {
 describe('queue registry with hooks', () => {
   it('queueDeclare pre-hook fail prevents declaration', () => {
     const hook: Hook<QueueDeclareCtx, QueueDeclareResult> = {
-      pre: () => ({ action: 'fail', error: new Error('declare blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('declare blocked') }),
     };
     const registry = new QueueRegistry({ hooks: { queueDeclare: hook } });
 
@@ -394,7 +391,7 @@ describe('queue registry with hooks', () => {
 
   it('queueDelete pre-hook fail prevents deletion', () => {
     const hook: Hook<QueueDeleteCtx, QueueDeleteResult> = {
-      pre: () => ({ action: 'fail', error: new Error('delete blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('delete blocked') }),
     };
     const registry = new QueueRegistry({ hooks: { queueDelete: hook } });
     registry.declareQueue('test', {});
@@ -405,7 +402,7 @@ describe('queue registry with hooks', () => {
 
   it('purge pre-hook fail prevents purge', () => {
     const hook: Hook<PurgeCtx, PurgeResult> = {
-      pre: () => ({ action: 'fail', error: new Error('purge blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('purge blocked') }),
     };
     const registry = new QueueRegistry({ hooks: { purge: hook } });
     registry.declareQueue('test', {});
@@ -416,7 +413,7 @@ describe('queue registry with hooks', () => {
 
   it('purge post-hook transform modifies result', () => {
     const hook: Hook<PurgeCtx, PurgeResult> = {
-      post: () => ({ action: 'transform', value: { messageCount: 999 } }),
+      post: () => ({ messageCount: 999 }),
     };
     const registry = new QueueRegistry({ hooks: { purge: hook } });
     registry.declareQueue('test', {});
@@ -432,7 +429,7 @@ describe('queue registry with hooks', () => {
 describe('binding store with hooks', () => {
   it('queueBind pre-hook fail prevents binding', () => {
     const hook: Hook<QueueBindCtx, QueueBindResult> = {
-      pre: () => ({ action: 'fail', error: new Error('bind blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('bind blocked') }),
     };
     const store = new BindingStore({ hooks: { queueBind: hook } });
 
@@ -444,7 +441,7 @@ describe('binding store with hooks', () => {
 
   it('queueUnbind pre-hook fail prevents unbinding', () => {
     const hook: Hook<QueueUnbindCtx, QueueUnbindResult> = {
-      pre: () => ({ action: 'fail', error: new Error('unbind blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('unbind blocked') }),
     };
     const store = new BindingStore({ hooks: { queueUnbind: hook } });
     store.addBinding('ex', 'q', 'key', {});
@@ -457,7 +454,7 @@ describe('binding store with hooks', () => {
 
   it('exchangeBind pre-hook fail prevents binding', () => {
     const hook: Hook<ExchangeBindCtx, ExchangeBindResult> = {
-      pre: () => ({ action: 'fail', error: new Error('e2e bind blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('e2e bind blocked') }),
     };
     const store = new BindingStore({ hooks: { exchangeBind: hook } });
 
@@ -469,7 +466,7 @@ describe('binding store with hooks', () => {
   it('exchangeUnbind pre-hook fail prevents unbinding', () => {
     const hook: Hook<ExchangeUnbindCtx, ExchangeUnbindResult> = {
       pre: () => ({
-        action: 'fail',
+        type: 'fail',
         error: new Error('e2e unbind blocked'),
       }),
     };
@@ -487,7 +484,7 @@ describe('binding store with hooks', () => {
 describe('consumer registry with hooks', () => {
   it('consume pre-hook fail prevents registration', () => {
     const hook: Hook<ConsumeCtx, ConsumeResult> = {
-      pre: () => ({ action: 'fail', error: new Error('consume blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('consume blocked') }),
     };
     const registry = new ConsumerRegistry({ hooks: { consume: hook } });
 
@@ -514,7 +511,7 @@ describe('consumer registry with hooks', () => {
 
   it('cancel pre-hook fail prevents cancellation', () => {
     const hook: Hook<CancelCtx, CancelResult> = {
-      pre: () => ({ action: 'fail', error: new Error('cancel blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('cancel blocked') }),
     };
     const registry = new ConsumerRegistry({ hooks: { cancel: hook } });
     const tag = registry.register('q1', 1, noop, {});
@@ -533,7 +530,7 @@ describe('channel with hooks', () => {
 
   it('prefetch pre-hook fail prevents setting prefetch', () => {
     const hook: Hook<PrefetchCtx, PrefetchResult> = {
-      pre: () => ({ action: 'fail', error: new Error('prefetch blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('prefetch blocked') }),
     };
     const ch = new Channel(1, makeDeps(), { prefetch: hook });
 
@@ -563,7 +560,7 @@ describe('channel with hooks', () => {
   it('confirmSelect pre-hook fail prevents activation', () => {
     const hook: Hook<ConfirmSelectCtx, ConfirmSelectResult> = {
       pre: () => ({
-        action: 'fail',
+        type: 'fail',
         error: new Error('confirm blocked'),
       }),
     };
@@ -575,7 +572,7 @@ describe('channel with hooks', () => {
 
   it('get pre-hook short_circuit returns specified value', () => {
     const hook: Hook<GetCtx, GetResult> = {
-      pre: () => ({ action: 'short_circuit', value: null }),
+      pre: () => ({ type: 'short_circuit', result: null }),
     };
     const ch = new Channel(
       1,
@@ -595,7 +592,7 @@ describe('channel with hooks', () => {
   it('recover pre-hook fail prevents recovery', () => {
     const requeued: string[] = [];
     const hook: Hook<RecoverCtx, RecoverResult> = {
-      pre: () => ({ action: 'fail', error: new Error('recover blocked') }),
+      pre: () => ({ type: 'fail', error: new Error('recover blocked') }),
     };
     const ch = new Channel(
       1,

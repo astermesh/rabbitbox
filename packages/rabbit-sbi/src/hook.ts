@@ -1,21 +1,31 @@
-import type { PreDecision, PostDecision } from './decisions.ts';
+import type { SimDecision } from './sim-decision.ts';
 
 /**
- * Pre-hook handler: receives context, returns a decision or void (= proceed).
+ * Pre-hook handler: runs before the engine operation.
+ *
+ * Returns a SimDecision to override execution, or undefined to proceed normally.
  */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
-export type PreHook<Ctx, R> = (ctx: Ctx) => PreDecision<R> | void;
+export type PreHandler<Ctx, Result> = (
+  ctx: Ctx
+) => SimDecision<Result> | undefined;
 
 /**
- * Post-hook handler: receives context + result, returns a decision or void (= pass-through).
+ * Post-hook handler: runs after the engine operation completes.
+ *
+ * Returns a transformed result, or undefined to keep the original result.
  */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
-export type PostHook<Ctx, R> = (ctx: Ctx, result: R) => PostDecision<R> | void;
+export type PostHandler<Ctx, Result> = (
+  ctx: Ctx,
+  result: Result
+) => Result | undefined;
 
 /**
- * A hook with optional pre and post phases.
+ * SBI hook with optional pre and post handler phases.
+ *
+ * Each hook point wraps an engine operation:
+ *   pre → engine execution → post → final result
  */
-export interface Hook<Ctx, R> {
-  readonly pre?: PreHook<Ctx, R>;
-  readonly post?: PostHook<Ctx, R>;
+export interface Hook<Ctx, Result> {
+  readonly pre?: PreHandler<Ctx, Result>;
+  readonly post?: PostHandler<Ctx, Result>;
 }

@@ -172,7 +172,7 @@ export class ExchangeRegistry {
       if (existing) {
         const mismatch = findMismatch(existing, type, opts);
         if (!mismatch) {
-          return;
+          return { exchange: name };
         }
 
         throw channelError.preconditionFailed(
@@ -201,6 +201,7 @@ export class ExchangeRegistry {
       };
 
       this.exchanges.set(name, exchange);
+      return { exchange: name };
     });
 
     // Return the exchange (may be existing or newly created)
@@ -213,11 +214,13 @@ export class ExchangeRegistry {
    * @param ifUnused - If true, only delete if the exchange has no bindings.
    */
   deleteExchange(name: string, ifUnused = false): void {
+    const bindingCount = this.bindingCountFn ? this.bindingCountFn(name) : 0;
     const ctx: ExchangeDeleteCtx = {
       name,
       ifUnused,
       meta: {
         exists: this.exchanges.has(name),
+        hasBindings: bindingCount > 0,
       },
     };
 
@@ -235,7 +238,7 @@ export class ExchangeRegistry {
       // RabbitMQ (since 3.0) silently returns delete-ok for non-existent exchanges,
       // deviating from the AMQP 0-9-1 spec which requires NOT_FOUND.
       if (!existing) {
-        return;
+        return undefined;
       }
 
       if (ifUnused) {
@@ -250,6 +253,7 @@ export class ExchangeRegistry {
       }
 
       this.exchanges.delete(name);
+      return undefined;
     });
   }
 
@@ -275,6 +279,7 @@ export class ExchangeRegistry {
           EXCHANGE_DECLARE_METHOD_ID
         );
       }
+      return undefined;
     });
 
     return this.exchanges.get(name) as Exchange;

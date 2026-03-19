@@ -39,7 +39,7 @@ describe('runHooked', () => {
   // ── Pre-hook: proceed ───────────────────────────────────────────
 
   describe('pre-hook proceed', () => {
-    it('executes engFn when pre returns void', () => {
+    it('executes engFn when pre returns undefined', () => {
       const hook: Hook<TestCtx, TestResult> = {
         pre: vi.fn(() => undefined),
       };
@@ -53,7 +53,7 @@ describe('runHooked', () => {
 
     it('executes engFn when pre returns proceed decision', () => {
       const hook: Hook<TestCtx, TestResult> = {
-        pre: () => ({ action: 'proceed' as const }),
+        pre: () => ({ type: 'proceed' as const }),
       };
       const eng = makeEng({ sum: 10 });
       const result = runHooked(hook, { value: 5 }, eng);
@@ -69,7 +69,7 @@ describe('runHooked', () => {
     it('throws the specified error without calling engFn', () => {
       const error = new Error('simulated failure');
       const hook: Hook<TestCtx, TestResult> = {
-        pre: () => ({ action: 'fail' as const, error }),
+        pre: () => ({ type: 'fail' as const, error }),
       };
       const eng = makeEng({ sum: 10 });
 
@@ -86,8 +86,8 @@ describe('runHooked', () => {
     it('returns specified value without calling engFn', () => {
       const hook: Hook<TestCtx, TestResult> = {
         pre: () => ({
-          action: 'short_circuit' as const,
-          value: { sum: 999 },
+          type: 'short_circuit' as const,
+          result: { sum: 999 },
         }),
       };
       const eng = makeEng({ sum: 10 });
@@ -100,13 +100,10 @@ describe('runHooked', () => {
     it('applies post-hook to short_circuit value', () => {
       const hook: Hook<TestCtx, TestResult> = {
         pre: () => ({
-          action: 'short_circuit' as const,
-          value: { sum: 100 },
+          type: 'short_circuit' as const,
+          result: { sum: 100 },
         }),
-        post: (_ctx, result) => ({
-          action: 'transform' as const,
-          value: { sum: result.sum + 1 },
-        }),
+        post: (_ctx, result) => ({ sum: result.sum + 1 }),
       };
       const eng = makeEng({ sum: 10 });
       const result = runHooked(hook, { value: 5 }, eng);
@@ -121,7 +118,7 @@ describe('runHooked', () => {
   describe('pre-hook delay', () => {
     it('still executes engFn (delay is a hint in sync mode)', () => {
       const hook: Hook<TestCtx, TestResult> = {
-        pre: () => ({ action: 'delay' as const, delayMs: 1000 }),
+        pre: () => ({ type: 'delay' as const, ms: 1000 }),
       };
       const eng = makeEng({ sum: 10 });
       const result = runHooked(hook, { value: 5 }, eng);
@@ -136,10 +133,7 @@ describe('runHooked', () => {
   describe('post-hook transform', () => {
     it('replaces result with transformed value', () => {
       const hook: Hook<TestCtx, TestResult> = {
-        post: (_ctx, result) => ({
-          action: 'transform' as const,
-          value: { sum: result.sum * 2 },
-        }),
+        post: (_ctx, result) => ({ sum: result.sum * 2 }),
       };
       const eng = makeEng({ sum: 21 });
       const result = runHooked(hook, { value: 5 }, eng);
@@ -148,7 +142,7 @@ describe('runHooked', () => {
       expect(eng).toHaveBeenCalledOnce();
     });
 
-    it('returns result unchanged when post returns void', () => {
+    it('returns result unchanged when post returns undefined', () => {
       const hook: Hook<TestCtx, TestResult> = {
         post: vi.fn(() => undefined),
       };
@@ -168,13 +162,11 @@ describe('runHooked', () => {
       const hook: Hook<TestCtx, TestResult> = {
         pre: () => {
           order.push('pre');
+          return undefined;
         },
         post: (_ctx, result) => {
           order.push('post');
-          return {
-            action: 'transform' as const,
-            value: { sum: result.sum + 1 },
-          };
+          return { sum: result.sum + 1 };
         },
       };
       const eng = vi.fn(() => {
@@ -218,8 +210,8 @@ describe('runHooked', () => {
 
     it('propagates engFn errors even with hooks', () => {
       const hook: Hook<TestCtx, TestResult> = {
-        pre: vi.fn(),
-        post: vi.fn(),
+        pre: vi.fn(() => undefined),
+        post: vi.fn(() => undefined),
       };
       const eng = vi.fn(() => {
         throw new Error('eng failure');

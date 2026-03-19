@@ -1,5 +1,7 @@
 # T01: SBI Type Definitions
 
+**Status:** done
+
 Define all hook types in the rabbit-sbi package.
 
 ## Scope

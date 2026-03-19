@@ -161,6 +161,7 @@ export class Channel {
       } else {
         this._consumerPrefetch = count;
       }
+      return undefined;
     });
   }
 
@@ -338,6 +339,7 @@ export class Channel {
         this.deps.onRequeue(entry.queueName, requeued);
       }
       this._unacked.clear();
+      return undefined;
     });
   }
 
@@ -363,6 +365,7 @@ export class Channel {
       }
 
       this.deps.onCheckExchange(name);
+      return undefined;
     });
   }
 
@@ -412,6 +415,7 @@ export class Channel {
     runHooked(this.hooks.confirmSelect, ctx, () => {
       this.assertOpen();
       this._confirmMode = true;
+      return undefined;
     });
   }
 

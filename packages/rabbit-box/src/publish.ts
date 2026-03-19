@@ -128,7 +128,7 @@ export function publish(opts: PublishOptions): PublishResult {
     exchange: exchangeName,
     routingKey,
     body,
-    properties: properties as Record<string, unknown>,
+    properties,
     mandatory,
     meta: {
       exchangeExists: exchangeName === '' || resolvedExchange !== undefined,

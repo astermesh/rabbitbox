@@ -160,9 +160,10 @@ export class BindingStore {
 
       // Idempotent: check for duplicate
       const duplicate = list.some((b) => bindingsMatch(b, binding));
-      if (duplicate) return;
+      if (duplicate) return undefined;
 
       list.push(binding);
+      return undefined;
     });
   }
 
@@ -179,16 +180,17 @@ export class BindingStore {
     routingKey: string,
     args: Record<string, unknown>
   ): void {
+    const list = this.byExchange.get(exchange);
+    const target: Binding = { exchange, queue, routingKey, arguments: args };
+    const bindingExists = list ? list.some((b) => bindingsMatch(b, target)) : false;
+
     const ctx: QueueUnbindCtx = {
       queue,
       exchange,
       routingKey,
       arguments: args,
       meta: {
-        queueExists: this.hasQueueFn ? this.hasQueueFn(queue) : true,
-        exchangeExists: this.hasExchangeFn
-          ? this.hasExchangeFn(exchange)
-          : true,
+        bindingExists,
       },
     };
 
@@ -209,16 +211,17 @@ export class BindingStore {
       }
 
       const list = this.byExchange.get(exchange);
-      if (!list) return;
+      if (!list) return undefined;
 
       const target: Binding = { exchange, queue, routingKey, arguments: args };
       const idx = list.findIndex((b) => bindingsMatch(b, target));
-      if (idx === -1) return;
+      if (idx === -1) return undefined;
 
       list.splice(idx, 1);
       if (list.length === 0) {
         this.byExchange.delete(exchange);
       }
+      return undefined;
     });
   }
 
@@ -275,9 +278,10 @@ export class BindingStore {
       }
 
       const duplicate = list.some((b) => bindingsMatch(b, binding));
-      if (duplicate) return;
+      if (duplicate) return undefined;
 
       list.push(binding);
+      return undefined;
     });
   }
 
@@ -320,7 +324,7 @@ export class BindingStore {
       }
 
       const list = this.byExchange.get(source);
-      if (!list) return;
+      if (!list) return undefined;
 
       const target: Binding = {
         exchange: source,
@@ -329,12 +333,13 @@ export class BindingStore {
         arguments: args,
       };
       const idx = list.findIndex((b) => bindingsMatch(b, target));
-      if (idx === -1) return;
+      if (idx === -1) return undefined;
 
       list.splice(idx, 1);
       if (list.length === 0) {
         this.byExchange.delete(source);
       }
+      return undefined;
     });
   }
 

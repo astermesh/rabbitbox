@@ -255,6 +255,7 @@ export class QueueRegistry {
       meta: {
         exists: existingEntry !== undefined,
         messageCount: existingEntry?.messageCount ?? 0,
+        consumerCount: existingEntry?.consumerCount ?? 0,
       },
     };
 
@@ -340,6 +341,7 @@ export class QueueRegistry {
     const ctx: PurgeCtx = {
       queue: name,
       meta: {
+        queueExists: existingEntry !== undefined,
         messageCount: existingEntry?.messageCount ?? 0,
       },
     };
