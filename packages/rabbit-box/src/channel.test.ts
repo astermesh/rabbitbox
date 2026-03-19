@@ -447,7 +447,9 @@ describe('Channel', () => {
 
     it('throws when onDequeue dependency is not provided', () => {
       // channel (from beforeEach) has no onDequeue
-      expect(() => channel.get('q1')).toThrow('onDequeue dependency not provided');
+      expect(() => channel.get('q1')).toThrow(
+        'onDequeue dependency not provided'
+      );
     });
   });
 

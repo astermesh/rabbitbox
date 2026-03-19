@@ -1,26 +1,5 @@
-// Core hook infrastructure
+// Message operations
 export type {
-  SimDecision,
-  ProceedDecision,
-  DelayDecision,
-  FailDecision,
-  ShortCircuitDecision,
-  TransformDecision,
-} from './sim-decision.ts';
-export type { Hook, PreHandler, PostHandler } from './hook.ts';
-
-// Domain types used by hook contexts
-export type {
-  MessageProperties,
-  XDeathReason,
-  XDeathEntry,
-  BrokerMessage,
-  DeliveredMessage,
-} from './message.ts';
-
-// Inbound hook types (IBI) — 21 hooks
-export type {
-  // Message operations
   PublishMeta,
   PublishCtx,
   PublishResult,
@@ -33,7 +12,10 @@ export type {
   CancelMeta,
   CancelCtx,
   CancelResult,
-  // Acknowledgment operations
+} from './message-ops.ts';
+
+// Acknowledgment operations
+export type {
   AckMeta,
   AckCtx,
   AckResult,
@@ -46,7 +28,10 @@ export type {
   RecoverMeta,
   RecoverCtx,
   RecoverResult,
-  // Topology operations
+} from './ack-ops.ts';
+
+// Topology operations
+export type {
   ExchangeDeclareMeta,
   ExchangeDeclareCtx,
   ExchangeDeclareResult,
@@ -80,41 +65,14 @@ export type {
   PurgeMeta,
   PurgeCtx,
   PurgeResult,
-  // Channel operations
+} from './topology.ts';
+
+// Channel operations
+export type {
   PrefetchMeta,
   PrefetchCtx,
   PrefetchResult,
   ConfirmSelectMeta,
   ConfirmSelectCtx,
   ConfirmSelectResult,
-} from './inbound/index.ts';
-
-// Outbound hook types (OBI) — 6 hooks
-export type {
-  TimeMeta,
-  TimeCtx,
-  TimeResult,
-  TimerSetMeta,
-  TimerSetCtx,
-  TimerHandle,
-  TimerSetResult,
-  RandomMeta,
-  RandomCtx,
-  RandomResult,
-  DeliveryMeta,
-  DeliveryCtx,
-  DeliveryResult,
-  ReturnMeta,
-  ReturnCtx,
-  ReturnResult,
-  PersistMeta,
-  PersistCtx,
-  PersistResult,
-} from './outbound.ts';
-
-// Aggregate hook interfaces
-export type {
-  RabbitInboundHooks,
-  RabbitOutboundHooks,
-  RabbitHooks,
-} from './hooks.ts';
+} from './channel.ts';
