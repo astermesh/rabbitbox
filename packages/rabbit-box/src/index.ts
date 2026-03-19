@@ -50,3 +50,13 @@ export type { ConnectionState, ConnectionDeps } from './connection.ts';
 export { ConsumerRegistry } from './consumer-registry.ts';
 export type { ConsumeOptions, ConsumerEntry } from './consumer-registry.ts';
 export { Dispatcher } from './dispatcher.ts';
+export type { DispatcherOptions } from './dispatcher.ts';
+export {
+  createDefaultTime,
+  createDefaultTimers,
+  createDefaultRandom,
+  createDefaultDelivery,
+  createDefaultReturn,
+  createDefaultPersist,
+  createDefaultObiHooks,
+} from './obi/index.ts';

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Queue, OverflowBehavior } from './types/queue.ts';
 import { channelError } from './errors/factories.ts';
 
@@ -47,7 +46,7 @@ export interface QueueRegistryOptions {
 }
 
 function defaultGenerateName(): string {
-  return `amq.gen-${randomUUID()}`;
+  return `amq.gen-${globalThis.crypto.randomUUID()}`;
 }
 
 function buildQueue(name: string, opts: DeclareQueueOptions): Queue {

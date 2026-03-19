@@ -44,6 +44,9 @@ export interface PublishOptions {
 
   /** Authenticated user for user-id validation. */
   readonly authenticatedUserId?: string;
+
+  /** Time provider for message timestamps. Defaults to Date.now(). */
+  readonly now?: () => number;
 }
 
 /**
@@ -110,6 +113,7 @@ export function publish(opts: PublishOptions): PublishResult {
     onReturn,
     onDispatch,
     authenticatedUserId,
+    now = Date.now,
   } = opts;
 
   // 1. Validate exchange exists
@@ -193,7 +197,7 @@ export function publish(opts: PublishOptions): PublishResult {
       mandatory,
       immediate,
       deliveryCount: 0,
-      enqueuedAt: Date.now(),
+      enqueuedAt: now(),
       priority: cleanProperties.priority ?? 0,
     };
     store.enqueue(message);

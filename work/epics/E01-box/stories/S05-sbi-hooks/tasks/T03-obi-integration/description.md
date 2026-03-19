@@ -1,5 +1,7 @@
 # T03: OBI Hook Integration
 
+**Status:** done
+
 Wire 6 outbound hooks and provide default implementations.
 
 ## Scope
