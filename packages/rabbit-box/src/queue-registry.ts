@@ -1,6 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { Queue, OverflowBehavior } from './types/queue.ts';
+import type {
+  Hook,
+  QueueDeclareCtx,
+  QueueDeclareResult as SbiQueueDeclareResult,
+  CheckQueueCtx,
+  CheckQueueResult as SbiCheckQueueResult,
+  QueueDeleteCtx,
+  QueueDeleteResult as SbiQueueDeleteResult,
+  PurgeCtx,
+  PurgeResult as SbiPurgeResult,
+} from '@rabbitbox/sbi';
 import { channelError } from './errors/factories.ts';
+import { runHooked } from './hook-runner.ts';
 
 /** AMQP class/method IDs for queue operations. */
 const QUEUE_CLASS = 50;
@@ -42,8 +54,17 @@ interface QueueEntry {
   consumerCount: number;
 }
 
+/** Optional hooks for queue registry operations. */
+export interface QueueRegistryHooks {
+  readonly queueDeclare?: Hook<QueueDeclareCtx, SbiQueueDeclareResult>;
+  readonly checkQueue?: Hook<CheckQueueCtx, SbiCheckQueueResult>;
+  readonly queueDelete?: Hook<QueueDeleteCtx, SbiQueueDeleteResult>;
+  readonly purge?: Hook<PurgeCtx, SbiPurgeResult>;
+}
+
 export interface QueueRegistryOptions {
   generateName?: () => string;
+  hooks?: QueueRegistryHooks;
 }
 
 function defaultGenerateName(): string {
@@ -94,9 +115,11 @@ function findArgumentDiff(
 export class QueueRegistry {
   private readonly queues = new Map<string, QueueEntry>();
   private readonly generateName: () => string;
+  private readonly hooks: QueueRegistryHooks;
 
   constructor(options?: QueueRegistryOptions) {
     this.generateName = options?.generateName ?? defaultGenerateName;
+    this.hooks = options?.hooks ?? {};
   }
 
   declareQueue(
@@ -104,103 +127,119 @@ export class QueueRegistry {
     opts: DeclareQueueOptions,
     connectionId?: string
   ): QueueDeclareOk {
-    // Server-generated name for empty string
-    if (name === '') {
-      const generated = this.generateName();
-      const queue = buildQueue(generated, {
-        ...opts,
-        exclusive: opts.exclusive ?? false,
-      });
+    const existingEntry = this.queues.get(name);
+    const ctx: QueueDeclareCtx = {
+      name,
+      durable: opts.durable ?? false,
+      exclusive: opts.exclusive ?? false,
+      autoDelete: opts.autoDelete ?? false,
+      arguments: opts.arguments ?? {},
+      meta: {
+        alreadyExists: existingEntry !== undefined,
+        messageCount: existingEntry?.messageCount ?? 0,
+        consumerCount: existingEntry?.consumerCount ?? 0,
+      },
+    };
+
+    return runHooked(this.hooks.queueDeclare, ctx, () => {
+      // Server-generated name for empty string
+      if (name === '') {
+        const generated = this.generateName();
+        const queue = buildQueue(generated, {
+          ...opts,
+          exclusive: opts.exclusive ?? false,
+        });
+        const entry: QueueEntry = {
+          queue,
+          ownerConnection: connectionId,
+          messageCount: 0,
+          consumerCount: 0,
+        };
+        this.queues.set(generated, entry);
+        return { queue: generated, messageCount: 0, consumerCount: 0 };
+      }
+
+      // Reserved prefix check — amq.* is reserved for broker-generated names
+      if (name.startsWith('amq.')) {
+        throw channelError.accessRefused(
+          `queue name '${name}' contains reserved prefix 'amq.*'`,
+          QUEUE_CLASS,
+          QUEUE_DECLARE
+        );
+      }
+
+      const existing = this.queues.get(name);
+
+      if (existing) {
+        // Exclusive queue — check ownership first (takes priority over precondition checks)
+        if (
+          existing.queue.exclusive &&
+          existing.ownerConnection !== connectionId
+        ) {
+          throw channelError.resourceLocked(
+            `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
+            QUEUE_CLASS,
+            QUEUE_DECLARE
+          );
+        }
+
+        // Equivalence check — all options must match
+        const newDurable = opts.durable ?? false;
+        const newAutoDelete = opts.autoDelete ?? false;
+        const newExclusive = opts.exclusive ?? false;
+        const newArgs = opts.arguments ?? {};
+
+        if (existing.queue.durable !== newDurable) {
+          throw channelError.preconditionFailed(
+            `inequivalent arg 'durable' for queue '${name}' in vhost '/': received '${newDurable}' but current is '${existing.queue.durable}'`,
+            QUEUE_CLASS,
+            QUEUE_DECLARE
+          );
+        }
+
+        if (existing.queue.autoDelete !== newAutoDelete) {
+          throw channelError.preconditionFailed(
+            `inequivalent arg 'auto_delete' for queue '${name}' in vhost '/': received '${newAutoDelete}' but current is '${existing.queue.autoDelete}'`,
+            QUEUE_CLASS,
+            QUEUE_DECLARE
+          );
+        }
+
+        if (existing.queue.exclusive !== newExclusive) {
+          throw channelError.preconditionFailed(
+            `inequivalent arg 'exclusive' for queue '${name}' in vhost '/': received '${newExclusive}' but current is '${existing.queue.exclusive}'`,
+            QUEUE_CLASS,
+            QUEUE_DECLARE
+          );
+        }
+
+        const diffKey = findArgumentDiff(existing.queue.arguments, newArgs);
+        if (diffKey !== undefined) {
+          throw channelError.preconditionFailed(
+            `inequivalent arg '${diffKey}' for queue '${name}' in vhost '/': received '${JSON.stringify(newArgs[diffKey]) ?? 'undefined'}' but current is '${JSON.stringify(existing.queue.arguments[diffKey]) ?? 'undefined'}'`,
+            QUEUE_CLASS,
+            QUEUE_DECLARE
+          );
+        }
+
+        return {
+          queue: name,
+          messageCount: existing.messageCount,
+          consumerCount: existing.consumerCount,
+        };
+      }
+
+      // New queue
+      const queue = buildQueue(name, opts);
       const entry: QueueEntry = {
         queue,
-        ownerConnection: connectionId,
+        ownerConnection: opts.exclusive ? connectionId : undefined,
         messageCount: 0,
         consumerCount: 0,
       };
-      this.queues.set(generated, entry);
-      return { queue: generated, messageCount: 0, consumerCount: 0 };
-    }
-
-    // Reserved prefix check — amq.* is reserved for broker-generated names
-    if (name.startsWith('amq.')) {
-      throw channelError.accessRefused(
-        `queue name '${name}' contains reserved prefix 'amq.*'`,
-        QUEUE_CLASS,
-        QUEUE_DECLARE
-      );
-    }
-
-    const existing = this.queues.get(name);
-
-    if (existing) {
-      // Exclusive queue — check ownership first (takes priority over precondition checks)
-      if (
-        existing.queue.exclusive &&
-        existing.ownerConnection !== connectionId
-      ) {
-        throw channelError.resourceLocked(
-          `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
-          QUEUE_CLASS,
-          QUEUE_DECLARE
-        );
-      }
-
-      // Equivalence check — all options must match
-      const newDurable = opts.durable ?? false;
-      const newAutoDelete = opts.autoDelete ?? false;
-      const newExclusive = opts.exclusive ?? false;
-      const newArgs = opts.arguments ?? {};
-
-      if (existing.queue.durable !== newDurable) {
-        throw channelError.preconditionFailed(
-          `inequivalent arg 'durable' for queue '${name}' in vhost '/': received '${newDurable}' but current is '${existing.queue.durable}'`,
-          QUEUE_CLASS,
-          QUEUE_DECLARE
-        );
-      }
-
-      if (existing.queue.autoDelete !== newAutoDelete) {
-        throw channelError.preconditionFailed(
-          `inequivalent arg 'auto_delete' for queue '${name}' in vhost '/': received '${newAutoDelete}' but current is '${existing.queue.autoDelete}'`,
-          QUEUE_CLASS,
-          QUEUE_DECLARE
-        );
-      }
-
-      if (existing.queue.exclusive !== newExclusive) {
-        throw channelError.preconditionFailed(
-          `inequivalent arg 'exclusive' for queue '${name}' in vhost '/': received '${newExclusive}' but current is '${existing.queue.exclusive}'`,
-          QUEUE_CLASS,
-          QUEUE_DECLARE
-        );
-      }
-
-      const diffKey = findArgumentDiff(existing.queue.arguments, newArgs);
-      if (diffKey !== undefined) {
-        throw channelError.preconditionFailed(
-          `inequivalent arg '${diffKey}' for queue '${name}' in vhost '/': received '${JSON.stringify(newArgs[diffKey]) ?? 'undefined'}' but current is '${JSON.stringify(existing.queue.arguments[diffKey]) ?? 'undefined'}'`,
-          QUEUE_CLASS,
-          QUEUE_DECLARE
-        );
-      }
-
-      return {
-        queue: name,
-        messageCount: existing.messageCount,
-        consumerCount: existing.consumerCount,
-      };
-    }
-
-    // New queue
-    const queue = buildQueue(name, opts);
-    const entry: QueueEntry = {
-      queue,
-      ownerConnection: opts.exclusive ? connectionId : undefined,
-      messageCount: 0,
-      consumerCount: 0,
-    };
-    this.queues.set(name, entry);
-    return { queue: name, messageCount: 0, consumerCount: 0 };
+      this.queues.set(name, entry);
+      return { queue: name, messageCount: 0, consumerCount: 0 };
+    });
   }
 
   deleteQueue(
@@ -208,90 +247,127 @@ export class QueueRegistry {
     opts?: DeleteQueueOptions,
     connectionId?: string
   ): QueueDeleteOk {
-    const entry = this.queues.get(name);
-    if (!entry) {
-      throw channelError.notFound(
-        `no queue '${name}' in vhost '/'`,
-        QUEUE_CLASS,
-        QUEUE_DELETE
-      );
-    }
+    const existingEntry = this.queues.get(name);
+    const ctx: QueueDeleteCtx = {
+      name,
+      ifUnused: opts?.ifUnused ?? false,
+      ifEmpty: opts?.ifEmpty ?? false,
+      meta: {
+        exists: existingEntry !== undefined,
+        messageCount: existingEntry?.messageCount ?? 0,
+        consumerCount: existingEntry?.consumerCount ?? 0,
+      },
+    };
 
-    if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
-      throw channelError.resourceLocked(
-        `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
-        QUEUE_CLASS,
-        QUEUE_DELETE
-      );
-    }
+    return runHooked(this.hooks.queueDelete, ctx, () => {
+      const entry = this.queues.get(name);
+      if (!entry) {
+        throw channelError.notFound(
+          `no queue '${name}' in vhost '/'`,
+          QUEUE_CLASS,
+          QUEUE_DELETE
+        );
+      }
 
-    if (opts?.ifUnused && entry.consumerCount > 0) {
-      throw channelError.preconditionFailed(
-        `queue '${name}' in vhost '/' in use`,
-        QUEUE_CLASS,
-        QUEUE_DELETE
-      );
-    }
+      if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
+        throw channelError.resourceLocked(
+          `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
+          QUEUE_CLASS,
+          QUEUE_DELETE
+        );
+      }
 
-    if (opts?.ifEmpty && entry.messageCount > 0) {
-      throw channelError.preconditionFailed(
-        `queue '${name}' in vhost '/' is not empty`,
-        QUEUE_CLASS,
-        QUEUE_DELETE
-      );
-    }
+      if (opts?.ifUnused && entry.consumerCount > 0) {
+        throw channelError.preconditionFailed(
+          `queue '${name}' in vhost '/' in use`,
+          QUEUE_CLASS,
+          QUEUE_DELETE
+        );
+      }
 
-    const { messageCount } = entry;
-    this.queues.delete(name);
-    return { messageCount };
+      if (opts?.ifEmpty && entry.messageCount > 0) {
+        throw channelError.preconditionFailed(
+          `queue '${name}' in vhost '/' is not empty`,
+          QUEUE_CLASS,
+          QUEUE_DELETE
+        );
+      }
+
+      const { messageCount } = entry;
+      this.queues.delete(name);
+      return { messageCount };
+    });
   }
 
   checkQueue(name: string, connectionId?: string): QueueDeclareOk {
-    const entry = this.queues.get(name);
-    if (!entry) {
-      throw channelError.notFound(
-        `no queue '${name}' in vhost '/'`,
-        QUEUE_CLASS,
-        QUEUE_DECLARE
-      );
-    }
-
-    if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
-      throw channelError.resourceLocked(
-        `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
-        QUEUE_CLASS,
-        QUEUE_DECLARE
-      );
-    }
-
-    return {
-      queue: name,
-      messageCount: entry.messageCount,
-      consumerCount: entry.consumerCount,
+    const existingEntry = this.queues.get(name);
+    const ctx: CheckQueueCtx = {
+      name,
+      meta: {
+        exists: existingEntry !== undefined,
+        messageCount: existingEntry?.messageCount ?? 0,
+        consumerCount: existingEntry?.consumerCount ?? 0,
+      },
     };
+
+    return runHooked(this.hooks.checkQueue, ctx, () => {
+      const entry = this.queues.get(name);
+      if (!entry) {
+        throw channelError.notFound(
+          `no queue '${name}' in vhost '/'`,
+          QUEUE_CLASS,
+          QUEUE_DECLARE
+        );
+      }
+
+      if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
+        throw channelError.resourceLocked(
+          `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
+          QUEUE_CLASS,
+          QUEUE_DECLARE
+        );
+      }
+
+      return {
+        queue: name,
+        messageCount: entry.messageCount,
+        consumerCount: entry.consumerCount,
+      };
+    });
   }
 
   purgeQueue(name: string, connectionId?: string): QueueDeleteOk {
-    const entry = this.queues.get(name);
-    if (!entry) {
-      throw channelError.notFound(
-        `no queue '${name}' in vhost '/'`,
-        QUEUE_CLASS,
-        QUEUE_PURGE
-      );
-    }
+    const existingEntry = this.queues.get(name);
+    const ctx: PurgeCtx = {
+      queue: name,
+      meta: {
+        queueExists: existingEntry !== undefined,
+        messageCount: existingEntry?.messageCount ?? 0,
+      },
+    };
 
-    if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
-      throw channelError.resourceLocked(
-        `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
-        QUEUE_CLASS,
-        QUEUE_PURGE
-      );
-    }
+    return runHooked(this.hooks.purge, ctx, () => {
+      const entry = this.queues.get(name);
+      if (!entry) {
+        throw channelError.notFound(
+          `no queue '${name}' in vhost '/'`,
+          QUEUE_CLASS,
+          QUEUE_PURGE
+        );
+      }
 
-    const { messageCount } = entry;
-    entry.messageCount = 0;
-    return { messageCount };
+      if (entry.queue.exclusive && entry.ownerConnection !== connectionId) {
+        throw channelError.resourceLocked(
+          `cannot obtain exclusive access to locked queue '${name}' in vhost '/'`,
+          QUEUE_CLASS,
+          QUEUE_PURGE
+        );
+      }
+
+      const { messageCount } = entry;
+      entry.messageCount = 0;
+      return { messageCount };
+    });
   }
 
   /** Get the Queue object (for inspection/testing). */

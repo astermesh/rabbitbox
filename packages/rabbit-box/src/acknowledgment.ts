@@ -1,7 +1,17 @@
 import type { Channel } from './channel.ts';
 import type { BrokerMessage } from './types/message.ts';
 import type { UnackedMessage } from './types/consumer.ts';
+import type {
+  Hook,
+  AckCtx,
+  AckResult,
+  NackCtx,
+  NackResult,
+  RejectCtx,
+  RejectResult,
+} from '@rabbitbox/sbi';
 import { channelError } from './errors/factories.ts';
+import { runHooked } from './hook-runner.ts';
 
 /** AMQP class/method IDs for basic operations. */
 const BASIC_CLASS = 60;
@@ -93,35 +103,50 @@ export function ack(
   channel: Channel,
   deliveryTag: number,
   multiple: boolean,
-  deps: AcknowledgmentDeps
+  deps: AcknowledgmentDeps,
+  hook?: Hook<AckCtx, AckResult>
 ): void {
-  channel.assertOpen();
+  const existing = channel.getUnacked(deliveryTag);
+  const ctx: AckCtx = {
+    deliveryTag,
+    multiple,
+    meta: {
+      messageExists:
+        existing !== undefined || (multiple && channel.unackedCount > 0),
+      consumerTag: existing?.consumerTag ?? '',
+      queue: existing?.queueName ?? '',
+    },
+  };
 
-  if (multiple) {
-    // AMQP 0-9-1: delivery-tag 0 with multiple=true means "all messages so far"
-    const removed =
-      deliveryTag === 0
-        ? removeAll(channel)
-        : channel.removeUnackedUpTo(deliveryTag);
-    if (removed.length === 0) {
-      throw channelError.preconditionFailed(
-        `unknown delivery tag ${deliveryTag}`,
-        BASIC_CLASS,
-        BASIC_ACK
-      );
+  runHooked(hook, ctx, () => {
+    channel.assertOpen();
+
+    if (multiple) {
+      const removed =
+        deliveryTag === 0
+          ? removeAll(channel)
+          : channel.removeUnackedUpTo(deliveryTag);
+      if (removed.length === 0) {
+        throw channelError.preconditionFailed(
+          `unknown delivery tag ${deliveryTag}`,
+          BASIC_CLASS,
+          BASIC_ACK
+        );
+      }
+      dispatchQueues(removed, deps);
+    } else {
+      const entry = channel.removeUnacked(deliveryTag);
+      if (entry === undefined) {
+        throw channelError.preconditionFailed(
+          `unknown delivery tag ${deliveryTag}`,
+          BASIC_CLASS,
+          BASIC_ACK
+        );
+      }
+      deps.onDispatch(entry.queueName);
     }
-    dispatchQueues(removed, deps);
-  } else {
-    const entry = channel.removeUnacked(deliveryTag);
-    if (entry === undefined) {
-      throw channelError.preconditionFailed(
-        `unknown delivery tag ${deliveryTag}`,
-        BASIC_CLASS,
-        BASIC_ACK
-      );
-    }
-    deps.onDispatch(entry.queueName);
-  }
+    return undefined;
+  });
 }
 
 /**
@@ -139,35 +164,52 @@ export function nack(
   deliveryTag: number,
   multiple: boolean,
   requeue: boolean,
-  deps: AcknowledgmentDeps
+  deps: AcknowledgmentDeps,
+  hook?: Hook<NackCtx, NackResult>
 ): void {
-  channel.assertOpen();
+  const existing = channel.getUnacked(deliveryTag);
+  const ctx: NackCtx = {
+    deliveryTag,
+    multiple,
+    requeue,
+    meta: {
+      messageExists:
+        existing !== undefined || (multiple && channel.unackedCount > 0),
+      willDeadLetter: !requeue,
+      consumerTag: existing?.consumerTag ?? '',
+      queue: existing?.queueName ?? '',
+    },
+  };
 
-  if (multiple) {
-    // AMQP 0-9-1: delivery-tag 0 with multiple=true means "all messages so far"
-    const removed =
-      deliveryTag === 0
-        ? removeAll(channel)
-        : channel.removeUnackedUpTo(deliveryTag);
-    if (removed.length === 0) {
-      throw channelError.preconditionFailed(
-        `unknown delivery tag ${deliveryTag}`,
-        BASIC_CLASS,
-        BASIC_NACK
-      );
+  runHooked(hook, ctx, () => {
+    channel.assertOpen();
+
+    if (multiple) {
+      const removed =
+        deliveryTag === 0
+          ? removeAll(channel)
+          : channel.removeUnackedUpTo(deliveryTag);
+      if (removed.length === 0) {
+        throw channelError.preconditionFailed(
+          `unknown delivery tag ${deliveryTag}`,
+          BASIC_CLASS,
+          BASIC_NACK
+        );
+      }
+      processNacked(removed, requeue, deps);
+    } else {
+      const entry = channel.removeUnacked(deliveryTag);
+      if (entry === undefined) {
+        throw channelError.preconditionFailed(
+          `unknown delivery tag ${deliveryTag}`,
+          BASIC_CLASS,
+          BASIC_NACK
+        );
+      }
+      processNacked([entry], requeue, deps);
     }
-    processNacked(removed, requeue, deps);
-  } else {
-    const entry = channel.removeUnacked(deliveryTag);
-    if (entry === undefined) {
-      throw channelError.preconditionFailed(
-        `unknown delivery tag ${deliveryTag}`,
-        BASIC_CLASS,
-        BASIC_NACK
-      );
-    }
-    processNacked([entry], requeue, deps);
-  }
+    return undefined;
+  });
 }
 
 /**
@@ -183,19 +225,35 @@ export function reject(
   channel: Channel,
   deliveryTag: number,
   requeue: boolean,
-  deps: AcknowledgmentDeps
+  deps: AcknowledgmentDeps,
+  hook?: Hook<RejectCtx, RejectResult>
 ): void {
-  channel.assertOpen();
+  const existing = channel.getUnacked(deliveryTag);
+  const ctx: RejectCtx = {
+    deliveryTag,
+    requeue,
+    meta: {
+      messageExists: existing !== undefined,
+      willDeadLetter: !requeue,
+      consumerTag: existing?.consumerTag ?? '',
+      queue: existing?.queueName ?? '',
+    },
+  };
 
-  const entry = channel.removeUnacked(deliveryTag);
-  if (entry === undefined) {
-    throw channelError.preconditionFailed(
-      `unknown delivery tag ${deliveryTag}`,
-      BASIC_CLASS,
-      BASIC_REJECT
-    );
-  }
-  processNacked([entry], requeue, deps);
+  runHooked(hook, ctx, () => {
+    channel.assertOpen();
+
+    const entry = channel.removeUnacked(deliveryTag);
+    if (entry === undefined) {
+      throw channelError.preconditionFailed(
+        `unknown delivery tag ${deliveryTag}`,
+        BASIC_CLASS,
+        BASIC_REJECT
+      );
+    }
+    processNacked([entry], requeue, deps);
+    return undefined;
+  });
 }
 
 /**
