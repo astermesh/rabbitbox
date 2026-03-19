@@ -212,9 +212,18 @@ describe('Connection', () => {
       conn.close();
 
       expect(onRequeue).toHaveBeenCalledTimes(3);
-      expect(onRequeue).toHaveBeenCalledWith('q1', msg1);
-      expect(onRequeue).toHaveBeenCalledWith('q1', msg2);
-      expect(onRequeue).toHaveBeenCalledWith('q2', msg3);
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q1',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q1',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q2',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
     });
 
     it('closes channels before deleting exclusive queues', () => {

@@ -223,7 +223,7 @@ export class Channel {
     const deliveryTag = this.nextDeliveryTag();
 
     if (!noAck) {
-      this.trackUnacked(deliveryTag, message, queueName);
+      this.trackUnacked(deliveryTag, message, queueName, '');
     }
 
     return {
@@ -299,9 +299,14 @@ export class Channel {
     if (this.state === 'closed') return;
     this.state = 'closing';
 
-    // Requeue all unacked messages to their original queues
+    // Requeue all unacked messages to their original queues.
+    // In real RabbitMQ, channel-close requeues set redelivered=true.
     for (const [, entry] of this._unacked) {
-      this.deps.onRequeue(entry.queueName, entry.message);
+      const requeued: BrokerMessage = {
+        ...entry.message,
+        deliveryCount: entry.message.deliveryCount + 1,
+      };
+      this.deps.onRequeue(entry.queueName, requeued);
     }
     this._unacked.clear();
 

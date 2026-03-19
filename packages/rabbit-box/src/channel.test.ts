@@ -202,7 +202,7 @@ describe('Channel', () => {
       expect(channel.getState()).toBe('closed');
     });
 
-    it('requeues all unacked messages on close', () => {
+    it('requeues all unacked messages on close with redelivered flag', () => {
       const msg1 = makeMessage('msg1');
       const msg2 = makeMessage('msg2');
       channel.trackUnacked(1, msg1, 'q1', 'ctag-1');
@@ -211,8 +211,14 @@ describe('Channel', () => {
       channel.close();
 
       expect(onRequeue).toHaveBeenCalledTimes(2);
-      expect(onRequeue).toHaveBeenCalledWith('q1', msg1);
-      expect(onRequeue).toHaveBeenCalledWith('q2', msg2);
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q1',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q2',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
     });
 
     it('clears unacked messages after close', () => {
@@ -378,7 +384,7 @@ describe('Channel', () => {
 
       // Track many unacked messages to simulate high load
       for (let i = 1; i <= 100; i++) {
-        channelWithGet.trackUnacked(i, makeMessage(), 'q1');
+        channelWithGet.trackUnacked(i, makeMessage(), 'q1', 'ctag-1');
       }
 
       // get() should still work regardless of unacked count
@@ -438,6 +444,11 @@ describe('Channel', () => {
       const result = channelWithGet.get('q1');
       expect(result?.consumerTag).toBeUndefined();
     });
+
+    it('throws when onDequeue dependency is not provided', () => {
+      // channel (from beforeEach) has no onDequeue
+      expect(() => channel.get('q1')).toThrow('onDequeue dependency not provided');
+    });
   });
 
   // ── recover (basic.recover) ───────────────────────────────────────
@@ -446,8 +457,8 @@ describe('Channel', () => {
     it('requeues all unacked messages', () => {
       const msg1 = makeMessage('a');
       const msg2 = makeMessage('b');
-      channel.trackUnacked(1, msg1, 'q1');
-      channel.trackUnacked(2, msg2, 'q2');
+      channel.trackUnacked(1, msg1, 'q1', 'ctag-1');
+      channel.trackUnacked(2, msg2, 'q2', 'ctag-2');
 
       channel.recover();
 
@@ -457,7 +468,7 @@ describe('Channel', () => {
 
     it('always requeues regardless of requeue parameter (matches RabbitMQ)', () => {
       const msg = makeMessage('test');
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       // Even with requeue=false, RabbitMQ always requeues
       channel.recover(false);
@@ -468,7 +479,7 @@ describe('Channel', () => {
 
     it('requeued messages have incremented deliveryCount for redelivered flag', () => {
       const msg = makeMessage('test', 0);
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       channel.recover();
 
@@ -478,14 +489,26 @@ describe('Channel', () => {
       );
     });
 
+    it('increments deliveryCount cumulatively across multiple recovers', () => {
+      const msg = makeMessage('test', 2); // already recovered twice
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
+
+      channel.recover();
+
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q1',
+        expect.objectContaining({ deliveryCount: 3 })
+      );
+    });
+
     it('is a no-op when there are no unacked messages', () => {
       channel.recover();
       expect(onRequeue).not.toHaveBeenCalled();
     });
 
     it('clears unacked map after recover', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
-      channel.trackUnacked(2, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage(), 'q1', 'ctag-1');
 
       channel.recover();
 
@@ -500,8 +523,8 @@ describe('Channel', () => {
     });
 
     it('requeues messages to their original queues', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'queue-alpha');
-      channel.trackUnacked(2, makeMessage('b'), 'queue-beta');
+      channel.trackUnacked(1, makeMessage('a'), 'queue-alpha', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'queue-beta', 'ctag-2');
 
       channel.recover();
 
@@ -563,6 +586,12 @@ describe('Channel', () => {
         ConnectionError
       );
     });
+
+    it('throws when onCheckExchange dependency is not provided', () => {
+      expect(() => channel.checkExchange('amq.direct')).toThrow(
+        'onCheckExchange dependency not provided'
+      );
+    });
   });
 
   // ── checkQueue (passive declare) ──────────────────────────────────
@@ -621,6 +650,12 @@ describe('Channel', () => {
       channelWithChecks.close();
       expect(() => channelWithChecks.checkQueue('my-queue')).toThrow(
         ConnectionError
+      );
+    });
+
+    it('throws when onCheckQueue dependency is not provided', () => {
+      expect(() => channel.checkQueue('my-queue')).toThrow(
+        'onCheckQueue dependency not provided'
       );
     });
   });
