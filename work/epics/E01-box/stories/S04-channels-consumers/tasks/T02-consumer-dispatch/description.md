@@ -1,5 +1,7 @@
 # T02: Consumer Management & Dispatch
 
+**Status:** done
+
 Implement consumer registration and round-robin message dispatch with prefetch.
 
 ## Scope

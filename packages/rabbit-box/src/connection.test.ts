@@ -205,9 +205,9 @@ describe('Connection', () => {
       const msg2 = makeMessage('msg2');
       const msg3 = makeMessage('msg3');
 
-      ch1.trackUnacked(1, msg1, 'q1');
-      ch1.trackUnacked(2, msg2, 'q1');
-      ch2.trackUnacked(1, msg3, 'q2');
+      ch1.trackUnacked(1, msg1, 'q1', 'ctag-1');
+      ch1.trackUnacked(2, msg2, 'q1', 'ctag-1');
+      ch2.trackUnacked(1, msg3, 'q2', 'ctag-2');
 
       conn.close();
 
@@ -223,7 +223,7 @@ describe('Connection', () => {
       onDeleteQueue.mockImplementation(() => order.push('delete-queue'));
 
       const ch = conn.createChannel();
-      ch.trackUnacked(1, makeMessage(), 'q1');
+      ch.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       conn.registerExclusiveQueue('excl-q');
 
       conn.close();

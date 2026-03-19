@@ -33,6 +33,20 @@ export class Channel {
   private flowActive = true;
   private readonly deps: ChannelDeps;
 
+  /**
+   * Per-consumer prefetch limit (basic.qos with global=false).
+   * In RabbitMQ, global=false means per-consumer, not per-channel.
+   * 0 = unlimited.
+   */
+  private _consumerPrefetch = 0;
+
+  /**
+   * Per-channel shared prefetch limit (basic.qos with global=true).
+   * Applies to total unacked messages across all consumers on this channel.
+   * 0 = unlimited.
+   */
+  private _channelPrefetch = 0;
+
   constructor(channelNumber: number, deps: ChannelDeps) {
     this.channelNumber = channelNumber;
     this.deps = deps;
@@ -66,13 +80,47 @@ export class Channel {
     }
   }
 
+  /**
+   * Set prefetch count (basic.qos).
+   *
+   * RabbitMQ semantics:
+   * - global=false → per-consumer limit (each consumer can have up to count unacked)
+   * - global=true  → per-channel shared limit (total unacked across all consumers)
+   *
+   * A count of 0 means unlimited.
+   */
+  setPrefetch(count: number, global: boolean): void {
+    this.assertOpen();
+    if (global) {
+      this._channelPrefetch = count;
+    } else {
+      this._consumerPrefetch = count;
+    }
+  }
+
+  /** Per-consumer prefetch limit (0 = unlimited). */
+  get consumerPrefetch(): number {
+    return this._consumerPrefetch;
+  }
+
+  /** Per-channel shared prefetch limit (0 = unlimited). */
+  get channelPrefetch(): number {
+    return this._channelPrefetch;
+  }
+
   /** Record a message as unacknowledged on this channel. */
   trackUnacked(
     deliveryTag: number,
     message: BrokerMessage,
-    queueName: string
+    queueName: string,
+    consumerTag: string
   ): void {
-    this._unacked.set(deliveryTag, { deliveryTag, message, queueName });
+    this._unacked.set(deliveryTag, {
+      deliveryTag,
+      message,
+      queueName,
+      consumerTag,
+    });
   }
 
   /** Retrieve an unacked message by delivery tag. */
