@@ -35,6 +35,8 @@ export {
 } from './routing.ts';
 export { publish } from './publish.ts';
 export type { PublishResult, PublishOptions } from './publish.ts';
+export { ack, nack, reject, ackAll, nackAll } from './acknowledgment.ts';
+export type { AcknowledgmentDeps } from './acknowledgment.ts';
 export { Channel } from './channel.ts';
 export type {
   ChannelState,
