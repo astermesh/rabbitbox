@@ -54,7 +54,7 @@ describe('acknowledgment', () => {
   describe('ack', () => {
     it('acks a single delivery tag', () => {
       const msg = makeMessage();
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       ack(channel, 1, false, deps);
 
@@ -62,7 +62,7 @@ describe('acknowledgment', () => {
     });
 
     it('triggers dispatch for the acked queue', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       ack(channel, 1, false, deps);
 
@@ -80,7 +80,7 @@ describe('acknowledgment', () => {
     });
 
     it('throws PRECONDITION_FAILED for already-acked delivery tag', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       ack(channel, 1, false, deps);
 
       try {
@@ -93,10 +93,10 @@ describe('acknowledgment', () => {
     });
 
     it('acks multiple tags with multiple=true', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q1');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
-      channel.trackUnacked(4, makeMessage('d'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q1', 'ctag-1');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
+      channel.trackUnacked(4, makeMessage('d'), 'q1', 'ctag-1');
 
       ack(channel, 3, true, deps);
 
@@ -108,9 +108,9 @@ describe('acknowledgment', () => {
     });
 
     it('triggers dispatch for all affected queues with multiple=true', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
 
       ack(channel, 3, true, deps);
 
@@ -119,9 +119,9 @@ describe('acknowledgment', () => {
     });
 
     it('dispatches each queue only once with multiple=true', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q1');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q1', 'ctag-1');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
 
       ack(channel, 3, true, deps);
 
@@ -130,7 +130,7 @@ describe('acknowledgment', () => {
     });
 
     it('multiple=true with no matching tags throws PRECONDITION_FAILED', () => {
-      channel.trackUnacked(5, makeMessage(), 'q1');
+      channel.trackUnacked(5, makeMessage(), 'q1', 'ctag-1');
 
       try {
         ack(channel, 3, true, deps);
@@ -142,9 +142,31 @@ describe('acknowledgment', () => {
     });
 
     it('does not call onRequeue', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       ack(channel, 1, false, deps);
       expect(onRequeue).not.toHaveBeenCalled();
+    });
+
+    it('delivery_tag=0 with multiple=true acks all outstanding (AMQP spec)', () => {
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
+
+      ack(channel, 0, true, deps);
+
+      expect(channel.unackedCount).toBe(0);
+      expect(onDispatch).toHaveBeenCalledWith('q1');
+      expect(onDispatch).toHaveBeenCalledWith('q2');
+    });
+
+    it('delivery_tag=0 with multiple=true throws when no unacked messages', () => {
+      try {
+        ack(channel, 0, true, deps);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        expect((err as ChannelError).replyCode).toBe(PRECONDITION_FAILED);
+      }
     });
   });
 
@@ -153,7 +175,7 @@ describe('acknowledgment', () => {
   describe('nack', () => {
     it('nacks a single delivery tag with requeue=true', () => {
       const msg = makeMessage();
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       nack(channel, 1, false, true, deps);
 
@@ -163,7 +185,7 @@ describe('acknowledgment', () => {
 
     it('requeued message has incremented deliveryCount', () => {
       const msg = makeMessage();
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       nack(channel, 1, false, true, deps);
 
@@ -172,7 +194,7 @@ describe('acknowledgment', () => {
     });
 
     it('requeues to the original queue', () => {
-      channel.trackUnacked(1, makeMessage(), 'orders');
+      channel.trackUnacked(1, makeMessage(), 'orders', 'ctag-1');
 
       nack(channel, 1, false, true, deps);
 
@@ -180,7 +202,7 @@ describe('acknowledgment', () => {
     });
 
     it('nack with requeue=false discards the message', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       nack(channel, 1, false, false, deps);
 
@@ -189,7 +211,7 @@ describe('acknowledgment', () => {
     });
 
     it('triggers dispatch after nack with requeue=true', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       nack(channel, 1, false, true, deps);
 
@@ -197,7 +219,7 @@ describe('acknowledgment', () => {
     });
 
     it('triggers dispatch after nack with requeue=false (frees prefetch)', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       nack(channel, 1, false, false, deps);
 
@@ -205,9 +227,9 @@ describe('acknowledgment', () => {
     });
 
     it('nacks multiple tags with multiple=true and requeue=true', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
 
       nack(channel, 3, true, true, deps);
 
@@ -216,9 +238,9 @@ describe('acknowledgment', () => {
     });
 
     it('nacks multiple tags with multiple=true and requeue=false', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q1');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q1', 'ctag-1');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
 
       nack(channel, 3, true, false, deps);
 
@@ -237,7 +259,7 @@ describe('acknowledgment', () => {
     });
 
     it('throws PRECONDITION_FAILED for already-nacked delivery tag', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       nack(channel, 1, false, true, deps);
 
       try {
@@ -250,7 +272,7 @@ describe('acknowledgment', () => {
     });
 
     it('multiple=true with no matching tags throws PRECONDITION_FAILED', () => {
-      channel.trackUnacked(5, makeMessage(), 'q1');
+      channel.trackUnacked(5, makeMessage(), 'q1', 'ctag-1');
 
       try {
         nack(channel, 3, true, true, deps);
@@ -273,7 +295,7 @@ describe('acknowledgment', () => {
         enqueuedAt: 1000,
         priority: 5,
       };
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       nack(channel, 1, false, true, deps);
 
@@ -286,13 +308,35 @@ describe('acknowledgment', () => {
       expect(requeued.priority).toBe(5);
       expect(requeued.deliveryCount).toBe(3);
     });
+
+    it('delivery_tag=0 with multiple=true nacks all outstanding with requeue', () => {
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
+
+      nack(channel, 0, true, true, deps);
+
+      expect(channel.unackedCount).toBe(0);
+      expect(onRequeue).toHaveBeenCalledTimes(2);
+      expect(onDispatch).toHaveBeenCalledWith('q1');
+      expect(onDispatch).toHaveBeenCalledWith('q2');
+    });
+
+    it('delivery_tag=0 with multiple=true nacks all without requeue', () => {
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q1', 'ctag-1');
+
+      nack(channel, 0, true, false, deps);
+
+      expect(channel.unackedCount).toBe(0);
+      expect(onRequeue).not.toHaveBeenCalled();
+    });
   });
 
   // ── reject ──────────────────────────────────────────────────────────
 
   describe('reject', () => {
     it('rejects a single delivery tag with requeue=true', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       reject(channel, 1, true, deps);
 
@@ -301,7 +345,7 @@ describe('acknowledgment', () => {
     });
 
     it('rejects with requeue=false discards the message', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       reject(channel, 1, false, deps);
 
@@ -311,7 +355,7 @@ describe('acknowledgment', () => {
 
     it('requeued message has incremented deliveryCount', () => {
       const msg = makeMessage();
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       reject(channel, 1, true, deps);
 
@@ -330,7 +374,7 @@ describe('acknowledgment', () => {
     });
 
     it('throws PRECONDITION_FAILED for already-rejected delivery tag', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       reject(channel, 1, false, deps);
 
       try {
@@ -343,7 +387,7 @@ describe('acknowledgment', () => {
     });
 
     it('triggers dispatch after reject', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       reject(channel, 1, true, deps);
 
@@ -355,9 +399,9 @@ describe('acknowledgment', () => {
 
   describe('ackAll', () => {
     it('acks all outstanding messages on the channel', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
 
       ackAll(channel, deps);
 
@@ -365,8 +409,8 @@ describe('acknowledgment', () => {
     });
 
     it('triggers dispatch for all affected queues', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
 
       ackAll(channel, deps);
 
@@ -382,7 +426,7 @@ describe('acknowledgment', () => {
     });
 
     it('does not requeue any messages', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       ackAll(channel, deps);
       expect(onRequeue).not.toHaveBeenCalled();
     });
@@ -392,8 +436,8 @@ describe('acknowledgment', () => {
 
   describe('nackAll', () => {
     it('nacks all outstanding messages with requeue=true', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
 
       nackAll(channel, true, deps);
 
@@ -402,8 +446,8 @@ describe('acknowledgment', () => {
     });
 
     it('nacks all outstanding messages with requeue=false', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
 
       nackAll(channel, false, deps);
 
@@ -412,7 +456,7 @@ describe('acknowledgment', () => {
     });
 
     it('requeued messages have incremented deliveryCount', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
 
       nackAll(channel, true, deps);
 
@@ -421,8 +465,8 @@ describe('acknowledgment', () => {
     });
 
     it('triggers dispatch for all affected queues', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
 
       nackAll(channel, true, deps);
 
@@ -436,24 +480,40 @@ describe('acknowledgment', () => {
       expect(onDispatch).not.toHaveBeenCalled();
       expect(onRequeue).not.toHaveBeenCalled();
     });
-
-    it('defaults requeue to true', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
-
-      nackAll(channel, undefined as unknown as boolean, deps);
-
-      expect(onRequeue).toHaveBeenCalledTimes(1);
-    });
   });
 
   // ── Cross-channel error ─────────────────────────────────────────────
 
-  describe('cross-channel validation', () => {
+  describe('closed channel throws for all operations', () => {
     it('ack on closed channel throws', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       channel.close();
 
       expect(() => ack(channel, 1, false, deps)).toThrow();
+    });
+
+    it('nack on closed channel throws', () => {
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
+      channel.close();
+
+      expect(() => nack(channel, 1, false, true, deps)).toThrow();
+    });
+
+    it('reject on closed channel throws', () => {
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
+      channel.close();
+
+      expect(() => reject(channel, 1, true, deps)).toThrow();
+    });
+
+    it('ackAll on closed channel throws', () => {
+      channel.close();
+      expect(() => ackAll(channel, deps)).toThrow();
+    });
+
+    it('nackAll on closed channel throws', () => {
+      channel.close();
+      expect(() => nackAll(channel, true, deps)).toThrow();
     });
   });
 });

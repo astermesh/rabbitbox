@@ -44,6 +44,27 @@ function dispatchQueues(
 }
 
 /**
+ * Remove and return ALL unacked messages from a channel.
+ * Used for delivery-tag 0 with multiple=true (AMQP "all messages so far").
+ */
+function removeAll(channel: Channel): UnackedMessage[] {
+  const entries: UnackedMessage[] = [];
+  for (const [, entry] of channel.unackedMessages) {
+    entries.push(entry);
+  }
+  if (entries.length > 0) {
+    let maxTag = 0;
+    for (const entry of entries) {
+      if (entry.deliveryTag > maxTag) {
+        maxTag = entry.deliveryTag;
+      }
+    }
+    channel.removeUnackedUpTo(maxTag);
+  }
+  return entries;
+}
+
+/**
  * Process entries for nack/reject: optionally requeue, then dispatch.
  */
 function processNacked(
@@ -77,7 +98,11 @@ export function ack(
   channel.assertOpen();
 
   if (multiple) {
-    const removed = channel.removeUnackedUpTo(deliveryTag);
+    // AMQP 0-9-1: delivery-tag 0 with multiple=true means "all messages so far"
+    const removed =
+      deliveryTag === 0
+        ? removeAll(channel)
+        : channel.removeUnackedUpTo(deliveryTag);
     if (removed.length === 0) {
       throw channelError.preconditionFailed(
         `unknown delivery tag ${deliveryTag}`,
@@ -119,7 +144,11 @@ export function nack(
   channel.assertOpen();
 
   if (multiple) {
-    const removed = channel.removeUnackedUpTo(deliveryTag);
+    // AMQP 0-9-1: delivery-tag 0 with multiple=true means "all messages so far"
+    const removed =
+      deliveryTag === 0
+        ? removeAll(channel)
+        : channel.removeUnackedUpTo(deliveryTag);
     if (removed.length === 0) {
       throw channelError.preconditionFailed(
         `unknown delivery tag ${deliveryTag}`,
@@ -176,21 +205,9 @@ export function reject(
 export function ackAll(channel: Channel, deps: AcknowledgmentDeps): void {
   channel.assertOpen();
 
-  const entries: UnackedMessage[] = [];
-  for (const [, entry] of channel.unackedMessages) {
-    entries.push(entry);
-  }
-
+  const entries = removeAll(channel);
   if (entries.length === 0) return;
 
-  // Find max tag and remove all up to it
-  let maxTag = 0;
-  for (const entry of entries) {
-    if (entry.deliveryTag > maxTag) {
-      maxTag = entry.deliveryTag;
-    }
-  }
-  channel.removeUnackedUpTo(maxTag);
   dispatchQueues(entries, deps);
 }
 
@@ -198,7 +215,7 @@ export function ackAll(channel: Channel, deps: AcknowledgmentDeps): void {
  * Negatively acknowledge all outstanding messages on this channel.
  * Convenience wrapper equivalent to nack(maxTag, multiple=true, requeue).
  *
- * @param requeue - Whether to requeue messages (defaults to true per AMQP spec)
+ * @param requeue - Whether to requeue messages
  */
 export function nackAll(
   channel: Channel,
@@ -207,21 +224,8 @@ export function nackAll(
 ): void {
   channel.assertOpen();
 
-  const shouldRequeue = requeue ?? true;
-
-  const entries: UnackedMessage[] = [];
-  for (const [, entry] of channel.unackedMessages) {
-    entries.push(entry);
-  }
-
+  const entries = removeAll(channel);
   if (entries.length === 0) return;
 
-  let maxTag = 0;
-  for (const entry of entries) {
-    if (entry.deliveryTag > maxTag) {
-      maxTag = entry.deliveryTag;
-    }
-  }
-  channel.removeUnackedUpTo(maxTag);
-  processNacked(entries, shouldRequeue, deps);
+  processNacked(entries, requeue, deps);
 }
