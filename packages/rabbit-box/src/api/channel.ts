@@ -45,6 +45,8 @@ export interface ApiChannelDeps {
   readonly removeMessageStore: (name: string) => void;
   /** Returns all queue names that have message stores. */
   readonly getAllQueueNames: () => Iterable<string>;
+  /** Authenticated username for user-id validation. */
+  readonly authenticatedUserId: string;
 }
 
 export class ApiChannel extends EventEmitter<ChannelEvents> {
@@ -218,6 +220,7 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
           this.deps.getChannel
         );
       },
+      authenticatedUserId: this.deps.authenticatedUserId,
     });
     return true;
   }

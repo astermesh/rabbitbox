@@ -739,13 +739,32 @@ describe('E2E integration tests', () => {
       const result = await ch.assertQueue('excl-test', { exclusive: true });
       expect(result.queue).toBe('excl-test');
 
-      // Verify from a second connection
-      const conn2 = RabbitBox.create();
+      // Second connection shares the same broker state
+      const conn2 = conn.createConnection();
       const ch2 = await conn2.createChannel();
+
+      // Before close: exclusive queue exists but other connections get RESOURCE_LOCKED
+      try {
+        await ch2.checkQueue('excl-test');
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        expect((err as ChannelError).replyCode).toBe(405); // RESOURCE_LOCKED
+      }
+
+      // Need a fresh channel since checkQueue channel error closes it
+      const ch3 = await conn2.createChannel();
 
       await conn.close();
 
-      await expect(ch2.checkQueue('excl-test')).rejects.toThrow(ChannelError);
+      // After close: exclusive queue should be deleted (NOT_FOUND, not RESOURCE_LOCKED)
+      try {
+        await ch3.checkQueue('excl-test');
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        expect((err as ChannelError).replyCode).toBe(404); // NOT_FOUND
+      }
       await conn2.close();
     });
 
@@ -819,16 +838,57 @@ describe('E2E integration tests', () => {
 
   describe('user-id validation: matching and mismatching userId property', () => {
     it('publish with matching userId succeeds', async () => {
+      // Default username is 'guest'
       await setup();
       await ch.assertQueue('uid-q');
 
-      // userId in properties matches when no authenticatedUserId is set
-      // (validation only fires when both are present)
       const ok = ch.sendToQueue('uid-q', new Uint8Array([1]), {
         userId: 'guest',
       });
       expect(ok).toBe(true);
       await conn.close();
+    });
+
+    it('publish with mismatching userId throws PRECONDITION_FAILED', async () => {
+      // Default username is 'guest', so userId 'imposter' should fail
+      await setup();
+      await ch.assertQueue('uid-q-fail');
+
+      expect(() =>
+        ch.sendToQueue('uid-q-fail', new Uint8Array([1]), {
+          userId: 'imposter',
+        })
+      ).toThrow(ChannelError);
+
+      try {
+        ch.sendToQueue('uid-q-fail', new Uint8Array([1]), {
+          userId: 'imposter',
+        });
+      } catch (err) {
+        expect((err as ChannelError).replyCode).toBe(406);
+        expect((err as ChannelError).replyText).toContain('user_id');
+      }
+      await conn.close();
+    });
+
+    it('publish with custom username validates correctly', async () => {
+      const customConn = RabbitBox.create({ username: 'admin' });
+      const customCh = await customConn.createChannel();
+      await customCh.assertQueue('uid-custom-q');
+
+      // Matching username succeeds
+      const ok = customCh.sendToQueue('uid-custom-q', new Uint8Array([1]), {
+        userId: 'admin',
+      });
+      expect(ok).toBe(true);
+
+      // Mismatching username fails
+      expect(() =>
+        customCh.sendToQueue('uid-custom-q', new Uint8Array([2]), {
+          userId: 'guest',
+        })
+      ).toThrow(ChannelError);
+      await customConn.close();
     });
 
     it('publish without userId property succeeds regardless of auth user', async () => {

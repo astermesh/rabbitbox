@@ -55,7 +55,7 @@ function create(_options?: RabbitBoxOptions): ApiConnection {
     messageStores,
   };
 
-  return new ApiConnection(connectionId, state);
+  return new ApiConnection(connectionId, state, _options?.username);
 }
 
 export const RabbitBox = { create };
