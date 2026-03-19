@@ -1,3 +1,14 @@
+export type {
+  ObiTime,
+  ObiTimers,
+  ObiRandom,
+  ObiDelivery,
+  ReturnContext,
+  ObiReturn,
+  ObiPersist,
+  ObiHooks,
+} from './types.ts';
+
 export {
   createDefaultTime,
   createDefaultTimers,

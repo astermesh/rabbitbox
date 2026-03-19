@@ -1,6 +1,22 @@
 import type { BrokerMessage, DeliveredMessage } from './types/message.ts';
 import type { UnackedMessage } from './types/consumer.ts';
+import type {
+  Hook,
+  GetCtx,
+  GetResult as SbiGetResult,
+  RecoverCtx,
+  RecoverResult,
+  CheckExchangeCtx,
+  CheckExchangeResult,
+  CheckQueueCtx,
+  CheckQueueResult as SbiCheckQueueResult,
+  PrefetchCtx,
+  PrefetchResult,
+  ConfirmSelectCtx,
+  ConfirmSelectResult,
+} from '@rabbitbox/sbi';
 import { connectionError } from './errors/factories.ts';
+import { runHooked } from './hook-runner.ts';
 
 /** AMQP class/method IDs for channel operations. */
 const CHANNEL_CLASS = 20;
@@ -49,6 +65,16 @@ export interface ChannelDeps {
  * messages, and supports flow control. Closing a channel requeues all unacked
  * messages (matching real RabbitMQ behavior).
  */
+/** Optional hooks for channel operations. */
+export interface ChannelHooks {
+  readonly get?: Hook<GetCtx, SbiGetResult>;
+  readonly recover?: Hook<RecoverCtx, RecoverResult>;
+  readonly checkExchange?: Hook<CheckExchangeCtx, CheckExchangeResult>;
+  readonly checkQueue?: Hook<CheckQueueCtx, SbiCheckQueueResult>;
+  readonly prefetch?: Hook<PrefetchCtx, PrefetchResult>;
+  readonly confirmSelect?: Hook<ConfirmSelectCtx, ConfirmSelectResult>;
+}
+
 export class Channel {
   readonly channelNumber: number;
   private state: ChannelState = 'open';
@@ -56,6 +82,7 @@ export class Channel {
   private readonly _unacked = new Map<number, UnackedMessage>();
   private flowActive = true;
   private readonly deps: ChannelDeps;
+  private readonly hooks: ChannelHooks;
 
   /**
    * Per-consumer prefetch limit (basic.qos with global=false).
@@ -71,9 +98,13 @@ export class Channel {
    */
   private _channelPrefetch = 0;
 
-  constructor(channelNumber: number, deps: ChannelDeps) {
+  /** Whether publisher confirms are enabled on this channel. */
+  private _confirmMode = false;
+
+  constructor(channelNumber: number, deps: ChannelDeps, hooks?: ChannelHooks) {
     this.channelNumber = channelNumber;
     this.deps = deps;
+    this.hooks = hooks ?? {};
   }
 
   getState(): ChannelState {
@@ -114,12 +145,24 @@ export class Channel {
    * A count of 0 means unlimited.
    */
   setPrefetch(count: number, global: boolean): void {
-    this.assertOpen();
-    if (global) {
-      this._channelPrefetch = count;
-    } else {
-      this._consumerPrefetch = count;
-    }
+    const ctx: PrefetchCtx = {
+      count,
+      global,
+      meta: {
+        previousCount: global ? this._channelPrefetch : this._consumerPrefetch,
+        channelConsumerCount: 0, // populated by caller if needed
+      },
+    };
+
+    runHooked(this.hooks.prefetch, ctx, () => {
+      this.assertOpen();
+      if (global) {
+        this._channelPrefetch = count;
+      } else {
+        this._consumerPrefetch = count;
+      }
+      return undefined;
+    });
   }
 
   /** Per-consumer prefetch limit (0 = unlimited). */
@@ -210,6 +253,41 @@ export class Channel {
    * is tracked in the unacked map with a delivery tag.
    */
   get(queueName: string, options?: GetOptions): DeliveredMessage | null {
+    const noAck = options?.noAck ?? false;
+    const ctx: GetCtx = {
+      queue: queueName,
+      noAck,
+      meta: {
+        queueExists: true, // caller validates queue existence
+        messageCount: 0,
+        consumerCount: 0,
+      },
+    };
+
+    // No-hook fast path or hook integration
+    if (!this.hooks.get) {
+      return this.doGet(queueName, noAck);
+    }
+
+    const result = runHooked(this.hooks.get, ctx, () => {
+      const delivered = this.doGet(queueName, noAck);
+      if (!delivered) return null;
+      return {
+        deliveryTag: delivered.deliveryTag,
+        redelivered: delivered.redelivered,
+        exchange: delivered.exchange,
+        routingKey: delivered.routingKey,
+        messageCount: delivered.messageCount,
+        body: delivered.body,
+        properties: delivered.properties as Record<string, unknown>,
+      };
+    });
+
+    return result as DeliveredMessage | null;
+  }
+
+  /** Internal get implementation shared by hooked and non-hooked paths. */
+  private doGet(queueName: string, noAck: boolean): DeliveredMessage | null {
     this.assertOpen();
 
     if (!this.deps.onDequeue) {
@@ -219,7 +297,6 @@ export class Channel {
     const { message, messageCount } = this.deps.onDequeue(queueName);
     if (!message) return null;
 
-    const noAck = options?.noAck ?? false;
     const deliveryTag = this.nextDeliveryTag();
 
     if (!noAck) {
@@ -244,16 +321,26 @@ export class Channel {
    * RabbitBox matches this behavior. Requeued messages get redelivered=true.
    */
   recover(_requeue?: boolean): void {
-    this.assertOpen();
+    const ctx: RecoverCtx = {
+      requeue: true, // RabbitMQ always requeues regardless of flag
+      meta: {
+        unackedCount: this._unacked.size,
+      },
+    };
 
-    for (const [, entry] of this._unacked) {
-      const requeued: BrokerMessage = {
-        ...entry.message,
-        deliveryCount: entry.message.deliveryCount + 1,
-      };
-      this.deps.onRequeue(entry.queueName, requeued);
-    }
-    this._unacked.clear();
+    runHooked(this.hooks.recover, ctx, () => {
+      this.assertOpen();
+
+      for (const [, entry] of this._unacked) {
+        const requeued: BrokerMessage = {
+          ...entry.message,
+          deliveryCount: entry.message.deliveryCount + 1,
+        };
+        this.deps.onRequeue(entry.queueName, requeued);
+      }
+      this._unacked.clear();
+      return undefined;
+    });
   }
 
   /**
@@ -263,13 +350,23 @@ export class Channel {
    * if the exchange does not exist.
    */
   checkExchange(name: string): void {
-    this.assertOpen();
+    const ctx: CheckExchangeCtx = {
+      name,
+      meta: {
+        exists: true, // populated optimistically; eng throws if not found
+      },
+    };
 
-    if (!this.deps.onCheckExchange) {
-      throw new Error('onCheckExchange dependency not provided');
-    }
+    runHooked(this.hooks.checkExchange, ctx, () => {
+      this.assertOpen();
 
-    this.deps.onCheckExchange(name);
+      if (!this.deps.onCheckExchange) {
+        throw new Error('onCheckExchange dependency not provided');
+      }
+
+      this.deps.onCheckExchange(name);
+      return undefined;
+    });
   }
 
   /**
@@ -279,13 +376,47 @@ export class Channel {
    * if the queue does not exist.
    */
   checkQueue(name: string): CheckQueueResult {
-    this.assertOpen();
+    const ctx: CheckQueueCtx = {
+      name,
+      meta: {
+        exists: true,
+        messageCount: 0,
+        consumerCount: 0,
+      },
+    };
 
-    if (!this.deps.onCheckQueue) {
-      throw new Error('onCheckQueue dependency not provided');
-    }
+    return runHooked(this.hooks.checkQueue, ctx, () => {
+      this.assertOpen();
 
-    return this.deps.onCheckQueue(name);
+      if (!this.deps.onCheckQueue) {
+        throw new Error('onCheckQueue dependency not provided');
+      }
+
+      return this.deps.onCheckQueue(name);
+    }) as CheckQueueResult;
+  }
+
+  /** Whether publisher confirms mode is active. */
+  get confirmMode(): boolean {
+    return this._confirmMode;
+  }
+
+  /**
+   * Enable publisher confirms on this channel (confirm.select).
+   */
+  confirmSelect(): void {
+    const ctx: ConfirmSelectCtx = {
+      meta: {
+        alreadyInConfirmMode: this._confirmMode,
+        channelIsTransactional: false,
+      },
+    };
+
+    runHooked(this.hooks.confirmSelect, ctx, () => {
+      this.assertOpen();
+      this._confirmMode = true;
+      return undefined;
+    });
   }
 
   /**

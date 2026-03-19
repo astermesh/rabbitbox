@@ -3,8 +3,14 @@ import type { BindingStore } from './binding-store.ts';
 import type { QueueRegistry } from './queue-registry.ts';
 import type { MessageStore } from './message-store.ts';
 import type { MessageProperties, BrokerMessage } from './types/message.ts';
+import type {
+  Hook,
+  PublishCtx,
+  PublishResult as SbiPublishResult,
+} from '@rabbitbox/sbi';
 import { channelError } from './errors/factories.ts';
 import { route } from './routing.ts';
+import { runHooked } from './hook-runner.ts';
 
 /** AMQP class/method IDs for basic.publish. */
 const BASIC_CLASS_ID = 60;
@@ -45,8 +51,8 @@ export interface PublishOptions {
   /** Authenticated user for user-id validation. */
   readonly authenticatedUserId?: string;
 
-  /** Time provider for message timestamps. Defaults to Date.now(). */
-  readonly now?: () => number;
+  /** Optional publish hook for SBI integration. */
+  readonly hook?: Hook<PublishCtx, SbiPublishResult>;
 }
 
 /**
@@ -113,115 +119,127 @@ export function publish(opts: PublishOptions): PublishResult {
     onReturn,
     onDispatch,
     authenticatedUserId,
-    now = Date.now,
+    hook,
   } = opts;
 
-  // 1. Validate exchange exists
+  // Build hook context with meta populated from current state
   const resolvedExchange = exchangeRegistry.getExchange(exchangeName);
-  if (!resolvedExchange && exchangeName !== '') {
-    throw channelError.notFound(
-      `no exchange '${exchangeName}' in vhost '/'`,
-      BASIC_CLASS_ID,
-      BASIC_PUBLISH_METHOD_ID
-    );
-  }
-  // Default exchange is always pre-declared by ExchangeRegistry
-  const exchange = resolvedExchange as NonNullable<typeof resolvedExchange>;
+  const ctx: PublishCtx = {
+    exchange: exchangeName,
+    routingKey,
+    body,
+    properties,
+    mandatory,
+    meta: {
+      exchangeExists: exchangeName === '' || resolvedExchange !== undefined,
+      exchangeType: resolvedExchange?.type ?? null,
+    },
+  };
 
-  // 2. Check internal flag
-  if (exchange.internal) {
-    throw channelError.accessRefused(
-      `cannot publish to internal exchange '${exchangeName}'`,
-      BASIC_CLASS_ID,
-      BASIC_PUBLISH_METHOD_ID
-    );
-  }
-
-  // 3. Validate user-id
-  if (
-    properties.userId !== undefined &&
-    authenticatedUserId !== undefined &&
-    properties.userId !== authenticatedUserId
-  ) {
-    throw channelError.preconditionFailed(
-      `user_id property set to '${properties.userId}' but authenticated user was '${authenticatedUserId}'`,
-      BASIC_CLASS_ID,
-      BASIC_PUBLISH_METHOD_ID
-    );
-  }
-
-  // 4. Route via exchange type
-  // Default exchange: route to queue named by routingKey (implicit binding)
-  const targetQueues = new Set<string>();
-
-  // 5. Process CC/BCC headers for additional routing keys
-  const ccKeys = extractSenderSelectedKeys(properties.headers, 'CC');
-  const bccKeys = extractSenderSelectedKeys(properties.headers, 'BCC');
-  const allRoutingKeys = [routingKey, ...ccKeys, ...bccKeys];
-
-  if (exchangeName === '') {
-    // Default exchange: each routing key is a queue name
-    for (const key of allRoutingKeys) {
-      const queue = queueRegistry.getQueue(key);
-      if (queue) {
-        targetQueues.add(key);
-      }
-    }
-  } else {
-    // Normal exchange: use bindings and routing
-    const bindings = bindingStore.getBindings(exchangeName);
-    for (const key of allRoutingKeys) {
-      const matchedBindings = route(
-        exchange,
-        bindings,
-        key,
-        properties.headers
+  return runHooked(hook, ctx, () => {
+    // 1. Validate exchange exists
+    if (!resolvedExchange && exchangeName !== '') {
+      throw channelError.notFound(
+        `no exchange '${exchangeName}' in vhost '/'`,
+        BASIC_CLASS_ID,
+        BASIC_PUBLISH_METHOD_ID
       );
-      for (const binding of matchedBindings) {
-        targetQueues.add(binding.queue);
+    }
+    // Default exchange is always pre-declared by ExchangeRegistry
+    const exchange = resolvedExchange as NonNullable<typeof resolvedExchange>;
+
+    // 2. Check internal flag
+    if (exchange.internal) {
+      throw channelError.accessRefused(
+        `cannot publish to internal exchange '${exchangeName}'`,
+        BASIC_CLASS_ID,
+        BASIC_PUBLISH_METHOD_ID
+      );
+    }
+
+    // 3. Validate user-id
+    if (
+      properties.userId !== undefined &&
+      authenticatedUserId !== undefined &&
+      properties.userId !== authenticatedUserId
+    ) {
+      throw channelError.preconditionFailed(
+        `user_id property set to '${properties.userId}' but authenticated user was '${authenticatedUserId}'`,
+        BASIC_CLASS_ID,
+        BASIC_PUBLISH_METHOD_ID
+      );
+    }
+
+    // 4. Route via exchange type
+    const targetQueues = new Set<string>();
+
+    // 5. Process CC/BCC headers for additional routing keys
+    const ccKeys = extractSenderSelectedKeys(properties.headers, 'CC');
+    const bccKeys = extractSenderSelectedKeys(properties.headers, 'BCC');
+    const allRoutingKeys = [routingKey, ...ccKeys, ...bccKeys];
+
+    if (exchangeName === '') {
+      for (const key of allRoutingKeys) {
+        const queue = queueRegistry.getQueue(key);
+        if (queue) {
+          targetQueues.add(key);
+        }
+      }
+    } else {
+      const bindings = bindingStore.getBindings(exchangeName);
+      for (const key of allRoutingKeys) {
+        const matchedBindings = route(
+          exchange,
+          bindings,
+          key,
+          properties.headers
+        );
+        for (const binding of matchedBindings) {
+          targetQueues.add(binding.queue);
+        }
       }
     }
-  }
 
-  // 6. Strip BCC header before enqueue
-  const cleanProperties = stripBccHeader(properties);
+    // 6. Strip BCC header before enqueue
+    const cleanProperties = stripBccHeader(properties);
 
-  // 7. Enqueue message copy to each queue
-  for (const queueName of targetQueues) {
-    const store = getMessageStore(queueName);
-    const message: BrokerMessage = {
-      body: new Uint8Array(body),
-      properties: { ...cleanProperties },
-      exchange: exchangeName,
-      routingKey,
-      mandatory,
-      immediate,
-      deliveryCount: 0,
-      enqueuedAt: now(),
-      priority: cleanProperties.priority ?? 0,
-    };
-    store.enqueue(message);
-  }
+    // 7. Enqueue message copy to each queue
+    for (const queueName of targetQueues) {
+      const store = getMessageStore(queueName);
+      const message: BrokerMessage = {
+        body: new Uint8Array(body),
+        properties: { ...cleanProperties },
+        exchange: exchangeName,
+        routingKey,
+        mandatory,
+        immediate,
+        deliveryCount: 0,
+        enqueuedAt: 0, // MessageStore.enqueue() overwrites with its own now()
+        priority: cleanProperties.priority ?? 0,
+      };
+      store.enqueue(message);
+    }
 
-  const routed = targetQueues.size > 0;
+    const routed = targetQueues.size > 0;
 
-  // 8. Mandatory return if unroutable
-  if (!routed && mandatory) {
-    onReturn(
-      312, // NO_ROUTE
-      'NO_ROUTE',
-      exchangeName,
-      routingKey,
-      body,
-      properties
-    );
-  }
+    // 8. Mandatory return if unroutable
+    if (!routed && mandatory) {
+      onReturn(
+        312, // NO_ROUTE
+        'NO_ROUTE',
+        exchangeName,
+        routingKey,
+        body,
+        properties
+      );
+    }
 
-  // 9. Trigger consumer dispatch for each affected queue
-  for (const queueName of targetQueues) {
-    onDispatch(queueName);
-  }
+    // 9. Trigger consumer dispatch for each affected queue
+    for (const queueName of targetQueues) {
+      onDispatch(queueName);
+    }
 
-  // 10. Return result
-  return { routed };
+    // 10. Return result
+    return { routed };
+  });
 }

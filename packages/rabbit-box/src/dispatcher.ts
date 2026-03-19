@@ -23,7 +23,7 @@ export class Dispatcher {
 
   constructor(registry: ConsumerRegistry, options?: DispatcherOptions) {
     this.registry = registry;
-    this.schedule = options?.schedule ?? queueMicrotask;
+    this.schedule = options?.schedule ?? ((cb) => queueMicrotask(cb));
   }
 
   /**

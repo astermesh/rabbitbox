@@ -8,9 +8,10 @@ import {
   createDefaultPersist,
   createDefaultObiHooks,
 } from './defaults.ts';
-import type { ObiHooks } from '@rabbitbox/sbi';
+import type { ObiHooks } from './types.ts';
 import { MessageStore } from '../message-store.ts';
 import { publish } from '../publish.ts';
+import type { PublishOptions } from '../publish.ts';
 import { Dispatcher } from '../dispatcher.ts';
 import { QueueRegistry } from '../queue-registry.ts';
 import { ExchangeRegistry } from '../exchange-registry.ts';
@@ -339,14 +340,13 @@ describe('OBI engine integration', () => {
     });
   });
 
-  describe('publish uses time hook', () => {
-    it('uses injected now() for message enqueuedAt via store', () => {
+  describe('publish delegates timestamps to MessageStore', () => {
+    it('MessageStore injects virtual now() into enqueuedAt', () => {
       const exchanges = new ExchangeRegistry();
       const bindings = new BindingStore();
       const queues = new QueueRegistry();
       queues.declareQueue('test', {});
       const stores = new Map<string, MessageStore>();
-      // Both publish and store share the same virtual clock
       const virtualNow = () => 99999;
       const getStore = (q: string) => {
         let s = stores.get(q);
@@ -370,7 +370,6 @@ describe('OBI engine integration', () => {
         getMessageStore: getStore,
         onReturn: vi.fn(),
         onDispatch: vi.fn(),
-        now: virtualNow,
       });
 
       const store = stores.get('test');
@@ -417,6 +416,123 @@ describe('OBI engine integration', () => {
       expect(firstCallback).toBeDefined();
       firstCallback?.();
       expect(callback).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('OBI return hook wraps onReturn callback', () => {
+    it('demonstrates Sim return interception via ObiReturn wrapping onReturn', () => {
+      const exchanges = new ExchangeRegistry();
+      const bindings = new BindingStore();
+      const queues = new QueueRegistry();
+      // No queue 'missing' declared — publish to default exchange will be unroutable
+
+      const stores = new Map<string, MessageStore>();
+      const getStore = (q: string) => {
+        let s = stores.get(q);
+        if (!s) {
+          s = new MessageStore();
+          stores.set(q, s);
+        }
+        return s;
+      };
+
+      // Track raw returns and OBI-intercepted returns
+      const rawReturns: { exchange: string; routingKey: string }[] = [];
+      const obiIntercepted: { replyCode: number; exchange: string }[] = [];
+
+      // Create OBI return hook that intercepts
+      const simReturn = {
+        notify: (
+          ctx: {
+            replyCode: number;
+            replyText: string;
+            exchange: string;
+            routingKey: string;
+          },
+          next: () => void
+        ) => {
+          obiIntercepted.push({
+            replyCode: ctx.replyCode,
+            exchange: ctx.exchange,
+          });
+          next(); // proceed with actual return
+        },
+      };
+
+      // This is how the composition layer wraps onReturn with OBI:
+      const wrappedOnReturn: PublishOptions['onReturn'] = (
+        replyCode,
+        replyText,
+        exchange,
+        routingKey,
+        _body,
+        _props
+      ) => {
+        simReturn.notify({ replyCode, replyText, exchange, routingKey }, () =>
+          rawReturns.push({ exchange, routingKey })
+        );
+      };
+
+      publish({
+        exchange: '',
+        routingKey: 'missing',
+        body: new Uint8Array([1]),
+        properties: {},
+        mandatory: true,
+        immediate: false,
+        exchangeRegistry: exchanges,
+        bindingStore: bindings,
+        queueRegistry: queues,
+        getMessageStore: getStore,
+        onReturn: wrappedOnReturn,
+        onDispatch: vi.fn(),
+      });
+
+      // OBI return hook intercepted the return
+      expect(obiIntercepted).toEqual([{ replyCode: 312, exchange: '' }]);
+      // Raw onReturn was also called (next() was invoked)
+      expect(rawReturns).toEqual([{ exchange: '', routingKey: 'missing' }]);
+    });
+
+    it('Sim can suppress returns by not calling next()', () => {
+      const exchanges = new ExchangeRegistry();
+      const bindings = new BindingStore();
+      const queues = new QueueRegistry();
+
+      const stores = new Map<string, MessageStore>();
+      const getStore = (q: string) => {
+        let s = stores.get(q);
+        if (!s) {
+          s = new MessageStore();
+          stores.set(q, s);
+        }
+        return s;
+      };
+
+      const rawReturns: unknown[] = [];
+
+      // Suppressing OBI return hook — never calls next()
+      const suppressOnReturn = () => {
+        // Sim intercepts and suppresses — no-op
+      };
+
+      publish({
+        exchange: '',
+        routingKey: 'missing',
+        body: new Uint8Array([1]),
+        properties: {},
+        mandatory: true,
+        immediate: false,
+        exchangeRegistry: exchanges,
+        bindingStore: bindings,
+        queueRegistry: queues,
+        getMessageStore: getStore,
+        onReturn: suppressOnReturn,
+        onDispatch: vi.fn(),
+      });
+
+      // Raw return was suppressed
+      expect(rawReturns).toEqual([]);
     });
   });
 

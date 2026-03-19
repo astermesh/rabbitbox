@@ -6,7 +6,7 @@ import type {
   ObiReturn,
   ObiPersist,
   ObiHooks,
-} from '@rabbitbox/sbi';
+} from './types.ts';
 
 /** Default time: delegates to Date.now(). */
 export function createDefaultTime(): ObiTime {
