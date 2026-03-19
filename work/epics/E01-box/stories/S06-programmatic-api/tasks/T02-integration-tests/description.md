@@ -1,5 +1,7 @@
 # T02: End-to-End Integration Tests
 
+**Status:** done
+
 Comprehensive test suite exercising full publish-to-consume flows through the public API.
 
 ## Scope

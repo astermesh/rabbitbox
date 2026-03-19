@@ -276,12 +276,15 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
 
   ack(message: DeliveredMessage, allUpTo?: boolean): void {
     this.assertOpen();
-    ack(this.deps.channel, message.deliveryTag, allUpTo ?? false, this.ackDeps);
+    // Decrement consumer unacked count BEFORE ack so that the dispatch
+    // triggered inside ack() sees the freed prefetch capacity.
     this.updateConsumerUnacked(message);
+    ack(this.deps.channel, message.deliveryTag, allUpTo ?? false, this.ackDeps);
   }
 
   nack(message: DeliveredMessage, allUpTo?: boolean, requeue?: boolean): void {
     this.assertOpen();
+    this.updateConsumerUnacked(message);
     nack(
       this.deps.channel,
       message.deliveryTag,
@@ -289,18 +292,17 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
       requeue ?? true,
       this.ackDeps
     );
-    this.updateConsumerUnacked(message);
   }
 
   reject(message: DeliveredMessage, requeue?: boolean): void {
     this.assertOpen();
+    this.updateConsumerUnacked(message);
     reject(
       this.deps.channel,
       message.deliveryTag,
       requeue ?? true,
       this.ackDeps
     );
-    this.updateConsumerUnacked(message);
   }
 
   // ── Polling ─────────────────────────────────────────────────────────
