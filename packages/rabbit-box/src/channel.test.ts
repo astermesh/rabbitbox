@@ -92,7 +92,7 @@ describe('Channel', () => {
   describe('unacked message tracking', () => {
     it('tracks an unacked message', () => {
       const msg = makeMessage();
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
       expect(channel.unackedCount).toBe(1);
 
       const entry = channel.getUnacked(1);
@@ -100,18 +100,19 @@ describe('Channel', () => {
       expect(entry?.deliveryTag).toBe(1);
       expect(entry?.message).toBe(msg);
       expect(entry?.queueName).toBe('q1');
+      expect(entry?.consumerTag).toBe('ctag-1');
     });
 
     it('tracks multiple unacked messages', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q2');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q2', 'ctag-2');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
       expect(channel.unackedCount).toBe(3);
     });
 
     it('removes an unacked message by delivery tag', () => {
       const msg = makeMessage();
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       const removed = channel.removeUnacked(1);
       expect(removed).toBeDefined();
@@ -126,7 +127,7 @@ describe('Channel', () => {
 
     it('exposes read-only unackedMessages map', () => {
       const msg = makeMessage();
-      channel.trackUnacked(1, msg, 'q1');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
 
       const map = channel.unackedMessages;
       expect(map.size).toBe(1);
@@ -138,10 +139,10 @@ describe('Channel', () => {
 
   describe('removeUnackedUpTo', () => {
     it('removes all messages up to and including the given tag', () => {
-      channel.trackUnacked(1, makeMessage('a'), 'q1');
-      channel.trackUnacked(2, makeMessage('b'), 'q1');
-      channel.trackUnacked(3, makeMessage('c'), 'q1');
-      channel.trackUnacked(4, makeMessage('d'), 'q1');
+      channel.trackUnacked(1, makeMessage('a'), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'q1', 'ctag-1');
+      channel.trackUnacked(3, makeMessage('c'), 'q1', 'ctag-1');
+      channel.trackUnacked(4, makeMessage('d'), 'q1', 'ctag-1');
 
       const removed = channel.removeUnackedUpTo(3);
       expect(removed).toHaveLength(3);
@@ -151,14 +152,14 @@ describe('Channel', () => {
     });
 
     it('returns empty array when no tags match', () => {
-      channel.trackUnacked(5, makeMessage(), 'q1');
+      channel.trackUnacked(5, makeMessage(), 'q1', 'ctag-1');
       const removed = channel.removeUnackedUpTo(3);
       expect(removed).toHaveLength(0);
       expect(channel.unackedCount).toBe(1);
     });
 
     it('handles single message', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       const removed = channel.removeUnackedUpTo(1);
       expect(removed).toHaveLength(1);
       expect(channel.unackedCount).toBe(0);
@@ -204,8 +205,8 @@ describe('Channel', () => {
     it('requeues all unacked messages on close', () => {
       const msg1 = makeMessage('msg1');
       const msg2 = makeMessage('msg2');
-      channel.trackUnacked(1, msg1, 'q1');
-      channel.trackUnacked(2, msg2, 'q2');
+      channel.trackUnacked(1, msg1, 'q1', 'ctag-1');
+      channel.trackUnacked(2, msg2, 'q2', 'ctag-2');
 
       channel.close();
 
@@ -215,7 +216,7 @@ describe('Channel', () => {
     });
 
     it('clears unacked messages after close', () => {
-      channel.trackUnacked(1, makeMessage(), 'q1');
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
       channel.close();
       expect(channel.unackedCount).toBe(0);
     });
@@ -248,6 +249,39 @@ describe('Channel', () => {
         expect(err).toBeInstanceOf(ConnectionError);
         expect((err as ConnectionError).replyCode).toBe(CHANNEL_ERROR);
       }
+    });
+  });
+
+  // ── Prefetch ──────────────────────────────────────────────────────
+
+  describe('prefetch', () => {
+    it('defaults to 0 (unlimited) for both per-consumer and per-channel', () => {
+      expect(channel.consumerPrefetch).toBe(0);
+      expect(channel.channelPrefetch).toBe(0);
+    });
+
+    it('sets per-consumer prefetch with global=false', () => {
+      channel.setPrefetch(10, false);
+      expect(channel.consumerPrefetch).toBe(10);
+      expect(channel.channelPrefetch).toBe(0);
+    });
+
+    it('sets per-channel prefetch with global=true', () => {
+      channel.setPrefetch(20, true);
+      expect(channel.channelPrefetch).toBe(20);
+      expect(channel.consumerPrefetch).toBe(0);
+    });
+
+    it('allows setting both independently', () => {
+      channel.setPrefetch(5, false);
+      channel.setPrefetch(15, true);
+      expect(channel.consumerPrefetch).toBe(5);
+      expect(channel.channelPrefetch).toBe(15);
+    });
+
+    it('throws on closed channel', () => {
+      channel.close();
+      expect(() => channel.setPrefetch(10, false)).toThrow(ConnectionError);
     });
   });
 

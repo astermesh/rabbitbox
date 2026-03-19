@@ -7,6 +7,7 @@ export interface UnackedMessage {
   readonly deliveryTag: number;
   readonly message: BrokerMessage;
   readonly queueName: string;
+  readonly consumerTag: string;
 }
 
 /**
@@ -20,7 +21,4 @@ export interface Consumer {
   readonly callback: (msg: DeliveredMessage) => void;
   readonly noAck: boolean;
   readonly exclusive: boolean;
-  readonly prefetchCount: number;
-  readonly unackedCount: number;
-  readonly unackedMessages: Map<number, UnackedMessage>;
 }

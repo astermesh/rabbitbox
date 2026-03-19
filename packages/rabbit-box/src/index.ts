@@ -45,3 +45,6 @@ export type {
 } from './channel.ts';
 export { Connection, createConnection } from './connection.ts';
 export type { ConnectionState, ConnectionDeps } from './connection.ts';
+export { ConsumerRegistry } from './consumer-registry.ts';
+export type { ConsumeOptions, ConsumerEntry } from './consumer-registry.ts';
+export { Dispatcher } from './dispatcher.ts';
