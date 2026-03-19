@@ -1,4 +1,4 @@
-import type { BrokerMessage } from './types/message.ts';
+import type { BrokerMessage, DeliveredMessage } from './types/message.ts';
 import type { UnackedMessage } from './types/consumer.ts';
 import { connectionError } from './errors/factories.ts';
 
@@ -8,6 +8,24 @@ const CHANNEL_CLOSE = 40;
 
 export type ChannelState = 'open' | 'closing' | 'closed';
 
+/** Options for basic.get. */
+export interface GetOptions {
+  readonly noAck?: boolean;
+}
+
+/** Result returned by checkQueue (passive declare). */
+export interface CheckQueueResult {
+  readonly queue: string;
+  readonly messageCount: number;
+  readonly consumerCount: number;
+}
+
+/** Result of dequeuing a message from a queue. */
+export interface DequeueResult {
+  readonly message: BrokerMessage | null;
+  readonly messageCount: number;
+}
+
 /**
  * Dependencies injected into a channel by its parent connection.
  */
@@ -16,6 +34,12 @@ export interface ChannelDeps {
   readonly onRequeue: (queueName: string, message: BrokerMessage) => void;
   /** Notify parent connection that this channel has closed. */
   readonly onClose: (channelNumber: number) => void;
+  /** Dequeue one message from a queue. Used by basic.get. */
+  readonly onDequeue?: (queueName: string) => DequeueResult;
+  /** Check that an exchange exists. Throws ChannelError NOT_FOUND if missing. */
+  readonly onCheckExchange?: (name: string) => void;
+  /** Check that a queue exists. Throws ChannelError NOT_FOUND if missing. */
+  readonly onCheckQueue?: (name: string) => CheckQueueResult;
 }
 
 /**
@@ -180,6 +204,91 @@ export class Channel {
   }
 
   /**
+   * Poll a single message from a queue (basic.get).
+   *
+   * Not affected by prefetch count. If noAck is false (default), the message
+   * is tracked in the unacked map with a delivery tag.
+   */
+  get(queueName: string, options?: GetOptions): DeliveredMessage | null {
+    this.assertOpen();
+
+    if (!this.deps.onDequeue) {
+      throw new Error('onDequeue dependency not provided');
+    }
+
+    const { message, messageCount } = this.deps.onDequeue(queueName);
+    if (!message) return null;
+
+    const noAck = options?.noAck ?? false;
+    const deliveryTag = this.nextDeliveryTag();
+
+    if (!noAck) {
+      this.trackUnacked(deliveryTag, message, queueName, '');
+    }
+
+    return {
+      deliveryTag,
+      redelivered: message.deliveryCount > 0,
+      exchange: message.exchange,
+      routingKey: message.routingKey,
+      messageCount,
+      body: message.body,
+      properties: message.properties,
+    };
+  }
+
+  /**
+   * Recover all unacknowledged messages on this channel (basic.recover).
+   *
+   * RabbitMQ ignores the requeue parameter — it always requeues regardless.
+   * RabbitBox matches this behavior. Requeued messages get redelivered=true.
+   */
+  recover(_requeue?: boolean): void {
+    this.assertOpen();
+
+    for (const [, entry] of this._unacked) {
+      const requeued: BrokerMessage = {
+        ...entry.message,
+        deliveryCount: entry.message.deliveryCount + 1,
+      };
+      this.deps.onRequeue(entry.queueName, requeued);
+    }
+    this._unacked.clear();
+  }
+
+  /**
+   * Passive exchange declare — verify an exchange exists.
+   *
+   * Delegates to the exchange registry. Throws a channel error (NOT_FOUND)
+   * if the exchange does not exist.
+   */
+  checkExchange(name: string): void {
+    this.assertOpen();
+
+    if (!this.deps.onCheckExchange) {
+      throw new Error('onCheckExchange dependency not provided');
+    }
+
+    this.deps.onCheckExchange(name);
+  }
+
+  /**
+   * Passive queue declare — verify a queue exists and get its stats.
+   *
+   * Delegates to the queue registry. Throws a channel error (NOT_FOUND)
+   * if the queue does not exist.
+   */
+  checkQueue(name: string): CheckQueueResult {
+    this.assertOpen();
+
+    if (!this.deps.onCheckQueue) {
+      throw new Error('onCheckQueue dependency not provided');
+    }
+
+    return this.deps.onCheckQueue(name);
+  }
+
+  /**
    * Close this channel.
    *
    * Requeues all unacknowledged messages to their original queues and notifies
@@ -190,9 +299,14 @@ export class Channel {
     if (this.state === 'closed') return;
     this.state = 'closing';
 
-    // Requeue all unacked messages to their original queues
+    // Requeue all unacked messages to their original queues.
+    // In real RabbitMQ, channel-close requeues set redelivered=true.
     for (const [, entry] of this._unacked) {
-      this.deps.onRequeue(entry.queueName, entry.message);
+      const requeued: BrokerMessage = {
+        ...entry.message,
+        deliveryCount: entry.message.deliveryCount + 1,
+      };
+      this.deps.onRequeue(entry.queueName, requeued);
     }
     this._unacked.clear();
 

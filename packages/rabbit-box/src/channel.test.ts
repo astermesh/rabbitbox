@@ -1,19 +1,24 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { Channel } from './channel.ts';
-import type { ChannelDeps } from './channel.ts';
+import type {
+  ChannelDeps,
+  DequeueResult,
+  CheckQueueResult,
+} from './channel.ts';
 import type { BrokerMessage } from './types/message.ts';
-import { ConnectionError } from './errors/amqp-error.ts';
-import { CHANNEL_ERROR } from './errors/reply-codes.ts';
+import { ChannelError, ConnectionError } from './errors/amqp-error.ts';
+import { CHANNEL_ERROR, NOT_FOUND } from './errors/reply-codes.ts';
+import { channelError } from './errors/factories.ts';
 
-function makeMessage(body = 'test'): BrokerMessage {
+function makeMessage(body = 'test', deliveryCount = 0): BrokerMessage {
   return {
     body: new TextEncoder().encode(body),
     properties: {},
-    exchange: '',
+    exchange: 'test-exchange',
     routingKey: 'test',
     mandatory: false,
     immediate: false,
-    deliveryCount: 0,
+    deliveryCount,
     enqueuedAt: Date.now(),
     priority: 0,
   };
@@ -197,7 +202,7 @@ describe('Channel', () => {
       expect(channel.getState()).toBe('closed');
     });
 
-    it('requeues all unacked messages on close', () => {
+    it('requeues all unacked messages on close with redelivered flag', () => {
       const msg1 = makeMessage('msg1');
       const msg2 = makeMessage('msg2');
       channel.trackUnacked(1, msg1, 'q1', 'ctag-1');
@@ -206,8 +211,14 @@ describe('Channel', () => {
       channel.close();
 
       expect(onRequeue).toHaveBeenCalledTimes(2);
-      expect(onRequeue).toHaveBeenCalledWith('q1', msg1);
-      expect(onRequeue).toHaveBeenCalledWith('q2', msg2);
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q1',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q2',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
     });
 
     it('clears unacked messages after close', () => {
@@ -290,6 +301,362 @@ describe('Channel', () => {
     it('throws ConnectionError when channel is closed (AMQP 504)', () => {
       channel.close();
       expect(() => channel.assertOpen()).toThrow(ConnectionError);
+    });
+  });
+
+  // ── get (basic.get polling) ───────────────────────────────────────
+
+  describe('get', () => {
+    type DequeueFn = (queueName: string) => DequeueResult;
+    let onDequeue: ReturnType<typeof vi.fn<DequeueFn>>;
+    let channelWithGet: Channel;
+
+    beforeEach(() => {
+      onDequeue = vi.fn<DequeueFn>();
+      channelWithGet = new Channel(1, {
+        onRequeue,
+        onClose,
+        onDequeue,
+      });
+    });
+
+    it('returns null when queue is empty', () => {
+      onDequeue.mockReturnValue({ message: null, messageCount: 0 });
+      const result = channelWithGet.get('q1');
+      expect(result).toBeNull();
+      expect(onDequeue).toHaveBeenCalledWith('q1');
+    });
+
+    it('returns delivered message with correct fields', () => {
+      const msg = makeMessage('hello');
+      onDequeue.mockReturnValue({ message: msg, messageCount: 5 });
+
+      const result = channelWithGet.get('q1');
+
+      expect(result).not.toBeNull();
+      expect(result?.body).toBe(msg.body);
+      expect(result?.properties).toBe(msg.properties);
+      expect(result?.exchange).toBe('test-exchange');
+      expect(result?.routingKey).toBe('test');
+      expect(result?.messageCount).toBe(5);
+    });
+
+    it('assigns delivery tag from channel sequence', () => {
+      onDequeue.mockReturnValue({
+        message: makeMessage(),
+        messageCount: 0,
+      });
+
+      const r1 = channelWithGet.get('q1');
+      const r2 = channelWithGet.get('q1');
+
+      expect(r1?.deliveryTag).toBe(1);
+      expect(r2?.deliveryTag).toBe(2);
+    });
+
+    it('tracks message in unacked map when noAck is false (default)', () => {
+      const msg = makeMessage();
+      onDequeue.mockReturnValue({ message: msg, messageCount: 0 });
+
+      channelWithGet.get('q1');
+
+      expect(channelWithGet.unackedCount).toBe(1);
+      const entry = channelWithGet.getUnacked(1);
+      expect(entry).toBeDefined();
+      expect(entry?.message).toBe(msg);
+      expect(entry?.queueName).toBe('q1');
+    });
+
+    it('does not track in unacked map when noAck is true', () => {
+      onDequeue.mockReturnValue({
+        message: makeMessage(),
+        messageCount: 0,
+      });
+
+      channelWithGet.get('q1', { noAck: true });
+
+      expect(channelWithGet.unackedCount).toBe(0);
+    });
+
+    it('is not affected by prefetch count', () => {
+      const msg = makeMessage();
+      onDequeue.mockReturnValue({ message: msg, messageCount: 10 });
+
+      // Track many unacked messages to simulate high load
+      for (let i = 1; i <= 100; i++) {
+        channelWithGet.trackUnacked(i, makeMessage(), 'q1', 'ctag-1');
+      }
+
+      // get() should still work regardless of unacked count
+      const result = channelWithGet.get('q1');
+      expect(result).not.toBeNull();
+    });
+
+    it('returns redelivered=false for fresh message (deliveryCount=0)', () => {
+      const msg = makeMessage('fresh', 0);
+      onDequeue.mockReturnValue({ message: msg, messageCount: 0 });
+
+      const result = channelWithGet.get('q1');
+      expect(result?.redelivered).toBe(false);
+    });
+
+    it('returns redelivered=true for redelivered message (deliveryCount>0)', () => {
+      const msg = makeMessage('redelivered', 1);
+      onDequeue.mockReturnValue({ message: msg, messageCount: 0 });
+
+      const result = channelWithGet.get('q1');
+      expect(result?.redelivered).toBe(true);
+    });
+
+    it('returns messageCount (remaining messages after get)', () => {
+      onDequeue.mockReturnValue({
+        message: makeMessage(),
+        messageCount: 42,
+      });
+
+      const result = channelWithGet.get('q1');
+      expect(result?.messageCount).toBe(42);
+    });
+
+    it('throws on closed channel', () => {
+      channelWithGet.close();
+      expect(() => channelWithGet.get('q1')).toThrow(ConnectionError);
+    });
+
+    it('propagates errors from onDequeue (e.g. queue not found)', () => {
+      onDequeue.mockImplementation(() => {
+        throw channelError.notFound(
+          "no queue 'nonexistent' in vhost '/'",
+          60,
+          70
+        );
+      });
+
+      expect(() => channelWithGet.get('nonexistent')).toThrow(ChannelError);
+    });
+
+    it('does not have consumerTag in result (get-ok has no consumer)', () => {
+      onDequeue.mockReturnValue({
+        message: makeMessage(),
+        messageCount: 0,
+      });
+
+      const result = channelWithGet.get('q1');
+      expect(result?.consumerTag).toBeUndefined();
+    });
+
+    it('throws when onDequeue dependency is not provided', () => {
+      // channel (from beforeEach) has no onDequeue
+      expect(() => channel.get('q1')).toThrow('onDequeue dependency not provided');
+    });
+  });
+
+  // ── recover (basic.recover) ───────────────────────────────────────
+
+  describe('recover', () => {
+    it('requeues all unacked messages', () => {
+      const msg1 = makeMessage('a');
+      const msg2 = makeMessage('b');
+      channel.trackUnacked(1, msg1, 'q1', 'ctag-1');
+      channel.trackUnacked(2, msg2, 'q2', 'ctag-2');
+
+      channel.recover();
+
+      expect(onRequeue).toHaveBeenCalledTimes(2);
+      expect(channel.unackedCount).toBe(0);
+    });
+
+    it('always requeues regardless of requeue parameter (matches RabbitMQ)', () => {
+      const msg = makeMessage('test');
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
+
+      // Even with requeue=false, RabbitMQ always requeues
+      channel.recover(false);
+
+      expect(onRequeue).toHaveBeenCalledTimes(1);
+      expect(channel.unackedCount).toBe(0);
+    });
+
+    it('requeued messages have incremented deliveryCount for redelivered flag', () => {
+      const msg = makeMessage('test', 0);
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
+
+      channel.recover();
+
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q1',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
+    });
+
+    it('increments deliveryCount cumulatively across multiple recovers', () => {
+      const msg = makeMessage('test', 2); // already recovered twice
+      channel.trackUnacked(1, msg, 'q1', 'ctag-1');
+
+      channel.recover();
+
+      expect(onRequeue).toHaveBeenCalledWith(
+        'q1',
+        expect.objectContaining({ deliveryCount: 3 })
+      );
+    });
+
+    it('is a no-op when there are no unacked messages', () => {
+      channel.recover();
+      expect(onRequeue).not.toHaveBeenCalled();
+    });
+
+    it('clears unacked map after recover', () => {
+      channel.trackUnacked(1, makeMessage(), 'q1', 'ctag-1');
+      channel.trackUnacked(2, makeMessage(), 'q1', 'ctag-1');
+
+      channel.recover();
+
+      expect(channel.unackedCount).toBe(0);
+      expect(channel.getUnacked(1)).toBeUndefined();
+      expect(channel.getUnacked(2)).toBeUndefined();
+    });
+
+    it('throws on closed channel', () => {
+      channel.close();
+      expect(() => channel.recover()).toThrow(ConnectionError);
+    });
+
+    it('requeues messages to their original queues', () => {
+      channel.trackUnacked(1, makeMessage('a'), 'queue-alpha', 'ctag-1');
+      channel.trackUnacked(2, makeMessage('b'), 'queue-beta', 'ctag-2');
+
+      channel.recover();
+
+      expect(onRequeue).toHaveBeenCalledWith(
+        'queue-alpha',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
+      expect(onRequeue).toHaveBeenCalledWith(
+        'queue-beta',
+        expect.objectContaining({ deliveryCount: 1 })
+      );
+    });
+  });
+
+  // ── checkExchange (passive declare) ───────────────────────────────
+
+  describe('checkExchange', () => {
+    type CheckExchangeFn = (name: string) => void;
+    let onCheckExchange: ReturnType<typeof vi.fn<CheckExchangeFn>>;
+    let channelWithChecks: Channel;
+
+    beforeEach(() => {
+      onCheckExchange = vi.fn<CheckExchangeFn>();
+      channelWithChecks = new Channel(1, {
+        onRequeue,
+        onClose,
+        onCheckExchange,
+      });
+    });
+
+    it('delegates to onCheckExchange callback', () => {
+      onCheckExchange.mockReturnValue(undefined);
+      channelWithChecks.checkExchange('amq.direct');
+      expect(onCheckExchange).toHaveBeenCalledWith('amq.direct');
+    });
+
+    it('throws channel error for non-existent exchange (NOT_FOUND)', () => {
+      onCheckExchange.mockImplementation(() => {
+        throw channelError.notFound(
+          "no exchange 'nonexistent' in vhost '/'",
+          40,
+          10
+        );
+      });
+
+      expect(() => channelWithChecks.checkExchange('nonexistent')).toThrow(
+        ChannelError
+      );
+      try {
+        channelWithChecks.checkExchange('nonexistent');
+      } catch (err) {
+        expect((err as ChannelError).replyCode).toBe(NOT_FOUND);
+      }
+    });
+
+    it('throws on closed channel', () => {
+      channelWithChecks.close();
+      expect(() => channelWithChecks.checkExchange('amq.direct')).toThrow(
+        ConnectionError
+      );
+    });
+
+    it('throws when onCheckExchange dependency is not provided', () => {
+      expect(() => channel.checkExchange('amq.direct')).toThrow(
+        'onCheckExchange dependency not provided'
+      );
+    });
+  });
+
+  // ── checkQueue (passive declare) ──────────────────────────────────
+
+  describe('checkQueue', () => {
+    type CheckQueueFn = (name: string) => CheckQueueResult;
+    let onCheckQueue: ReturnType<typeof vi.fn<CheckQueueFn>>;
+    let channelWithChecks: Channel;
+
+    beforeEach(() => {
+      onCheckQueue = vi.fn<CheckQueueFn>();
+      channelWithChecks = new Channel(1, {
+        onRequeue,
+        onClose,
+        onCheckQueue,
+      });
+    });
+
+    it('returns queue info from onCheckQueue callback', () => {
+      onCheckQueue.mockReturnValue({
+        queue: 'my-queue',
+        messageCount: 10,
+        consumerCount: 2,
+      });
+
+      const result = channelWithChecks.checkQueue('my-queue');
+
+      expect(result).toEqual({
+        queue: 'my-queue',
+        messageCount: 10,
+        consumerCount: 2,
+      });
+      expect(onCheckQueue).toHaveBeenCalledWith('my-queue');
+    });
+
+    it('throws channel error for non-existent queue (NOT_FOUND)', () => {
+      onCheckQueue.mockImplementation(() => {
+        throw channelError.notFound(
+          "no queue 'nonexistent' in vhost '/'",
+          50,
+          10
+        );
+      });
+
+      expect(() => channelWithChecks.checkQueue('nonexistent')).toThrow(
+        ChannelError
+      );
+      try {
+        channelWithChecks.checkQueue('nonexistent');
+      } catch (err) {
+        expect((err as ChannelError).replyCode).toBe(NOT_FOUND);
+      }
+    });
+
+    it('throws on closed channel', () => {
+      channelWithChecks.close();
+      expect(() => channelWithChecks.checkQueue('my-queue')).toThrow(
+        ConnectionError
+      );
+    });
+
+    it('throws when onCheckQueue dependency is not provided', () => {
+      expect(() => channel.checkQueue('my-queue')).toThrow(
+        'onCheckQueue dependency not provided'
+      );
     });
   });
 });

@@ -38,7 +38,13 @@ export type { PublishResult, PublishOptions } from './publish.ts';
 export { ack, nack, reject, ackAll, nackAll } from './acknowledgment.ts';
 export type { AcknowledgmentDeps } from './acknowledgment.ts';
 export { Channel } from './channel.ts';
-export type { ChannelState, ChannelDeps } from './channel.ts';
+export type {
+  ChannelState,
+  ChannelDeps,
+  GetOptions,
+  CheckQueueResult,
+  DequeueResult,
+} from './channel.ts';
 export { Connection, createConnection } from './connection.ts';
 export type { ConnectionState, ConnectionDeps } from './connection.ts';
 export { ConsumerRegistry } from './consumer-registry.ts';
