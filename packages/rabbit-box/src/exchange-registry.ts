@@ -191,13 +191,20 @@ export class ExchangeRegistry {
         );
       }
 
+      const args = opts.arguments ?? {};
+      const alternateExchange =
+        typeof args['alternate-exchange'] === 'string'
+          ? args['alternate-exchange']
+          : undefined;
+
       const exchange: Exchange = {
         name,
         type,
         durable: opts.durable ?? true,
         autoDelete: opts.autoDelete ?? false,
         internal: opts.internal ?? false,
-        arguments: opts.arguments ?? {},
+        arguments: args,
+        alternateExchange,
       };
 
       this.exchanges.set(name, exchange);

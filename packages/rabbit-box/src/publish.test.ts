@@ -915,4 +915,251 @@ describe('publish', () => {
       expect(ctx.getStore('q1').count()).toBe(1);
     });
   });
+
+  // ── Alternate exchange routing ──────────────────────────────────────
+
+  describe('alternate exchange routing', () => {
+    it('routes to alternate exchange when primary has no matching queues', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'fanout');
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('alt', 'q-alt', '', {});
+
+      const result = doPublish(ctx, 'primary', 'no-match', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-alt').count()).toBe(1);
+    });
+
+    it('uses original routing key when routing through alternate exchange', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'direct');
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('alt', 'q-alt', 'original-key', {});
+
+      const result = doPublish(ctx, 'primary', 'original-key', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-alt').count()).toBe(1);
+    });
+
+    it('follows chain of alternate exchanges', () => {
+      ctx.exchanges.declareExchange('ex1', 'direct', {
+        arguments: { 'alternate-exchange': 'ex2' },
+      });
+      ctx.exchanges.declareExchange('ex2', 'direct', {
+        arguments: { 'alternate-exchange': 'ex3' },
+      });
+      ctx.exchanges.declareExchange('ex3', 'fanout');
+      ctx.queues.declareQueue('q-final', {});
+      ctx.bindings.addBinding('ex3', 'q-final', '', {});
+
+      const result = doPublish(ctx, 'ex1', 'no-match', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-final').count()).toBe(1);
+    });
+
+    it('emits basic.return with original exchange when all alternates exhausted and mandatory', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'direct');
+
+      const result = doPublish(
+        ctx,
+        'primary',
+        'no-match',
+        body('hello'),
+        {},
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(false);
+      expect(ctx.onReturn).toHaveBeenCalledOnce();
+      const [replyCode, replyText, returnedExchange, returnedRk] =
+        assertDefined(ctx.onReturn.mock.calls[0]);
+      expect(replyCode).toBe(312);
+      expect(replyText).toBe('NO_ROUTE');
+      expect(returnedExchange).toBe('primary');
+      expect(returnedRk).toBe('no-match');
+    });
+
+    it('does not emit basic.return when alternate exchange routes successfully and mandatory', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'fanout');
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('alt', 'q-alt', '', {});
+
+      const result = doPublish(
+        ctx,
+        'primary',
+        'no-match',
+        body('hello'),
+        {},
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(true);
+      expect(ctx.onReturn).not.toHaveBeenCalled();
+    });
+
+    it('does not use alternate exchange when primary routes to queues', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'fanout');
+      ctx.queues.declareQueue('q-primary', {});
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('primary', 'q-primary', 'key', {});
+      ctx.bindings.addBinding('alt', 'q-alt', '', {});
+
+      doPublish(ctx, 'primary', 'key', body('hello'));
+
+      expect(ctx.getStore('q-primary').count()).toBe(1);
+      expect(ctx.getStore('q-alt').count()).toBe(0);
+    });
+
+    it('behaves as if not configured when alternate exchange was deleted', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'fanout');
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('alt', 'q-alt', '', {});
+
+      // Delete the alternate exchange
+      ctx.exchanges.deleteExchange('alt');
+
+      const result = doPublish(
+        ctx,
+        'primary',
+        'no-match',
+        body('hello'),
+        {},
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(false);
+      expect(ctx.onReturn).toHaveBeenCalledOnce();
+      expect(ctx.getStore('q-alt').count()).toBe(0);
+    });
+
+    it('handles cycle in alternate exchange chain without infinite loop', () => {
+      ctx.exchanges.declareExchange('ex-a', 'direct', {
+        arguments: { 'alternate-exchange': 'ex-b' },
+      });
+      ctx.exchanges.declareExchange('ex-b', 'direct', {
+        arguments: { 'alternate-exchange': 'ex-a' },
+      });
+
+      const result = doPublish(
+        ctx,
+        'ex-a',
+        'no-match',
+        body('hello'),
+        {},
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(false);
+      expect(ctx.onReturn).toHaveBeenCalledOnce();
+    });
+
+    it('handles self-referencing alternate exchange', () => {
+      ctx.exchanges.declareExchange('self-ref', 'direct', {
+        arguments: { 'alternate-exchange': 'self-ref' },
+      });
+
+      const result = doPublish(
+        ctx,
+        'self-ref',
+        'no-match',
+        body('hello'),
+        {},
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(false);
+      expect(ctx.onReturn).toHaveBeenCalledOnce();
+    });
+
+    it('stops at first alternate that routes to queues in a chain', () => {
+      ctx.exchanges.declareExchange('ex1', 'direct', {
+        arguments: { 'alternate-exchange': 'ex2' },
+      });
+      ctx.exchanges.declareExchange('ex2', 'direct', {
+        arguments: { 'alternate-exchange': 'ex3' },
+      });
+      ctx.exchanges.declareExchange('ex3', 'fanout');
+      ctx.queues.declareQueue('q2', {});
+      ctx.queues.declareQueue('q3', {});
+      ctx.bindings.addBinding('ex2', 'q2', 'key', {});
+      ctx.bindings.addBinding('ex3', 'q3', '', {});
+
+      doPublish(ctx, 'ex1', 'key', body('hello'));
+
+      expect(ctx.getStore('q2').count()).toBe(1);
+      expect(ctx.getStore('q3').count()).toBe(0);
+    });
+
+    it('alternate exchange stores alternateExchange from arguments on declare', () => {
+      const ex = ctx.exchanges.declareExchange('with-alt', 'direct', {
+        arguments: { 'alternate-exchange': 'my-fallback' },
+      });
+
+      expect(ex.alternateExchange).toBe('my-fallback');
+    });
+
+    it('exchange without alternate-exchange argument has no alternateExchange', () => {
+      const ex = ctx.exchanges.declareExchange('no-alt', 'direct');
+      expect(ex.alternateExchange).toBeUndefined();
+    });
+
+    it('alternate exchange works with topic exchange type', () => {
+      ctx.exchanges.declareExchange('primary-topic', 'topic', {
+        arguments: { 'alternate-exchange': 'alt-fanout' },
+      });
+      ctx.exchanges.declareExchange('alt-fanout', 'fanout');
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('alt-fanout', 'q-alt', '', {});
+
+      const result = doPublish(
+        ctx,
+        'primary-topic',
+        'no.match.here',
+        body('hello')
+      );
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-alt').count()).toBe(1);
+    });
+
+    it('alternate exchange works with headers exchange type', () => {
+      ctx.exchanges.declareExchange('primary-headers', 'headers', {
+        arguments: { 'alternate-exchange': 'alt-fanout' },
+      });
+      ctx.exchanges.declareExchange('alt-fanout', 'fanout');
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('primary-headers', 'q-alt', '', {
+        'x-match': 'all',
+        type: 'special',
+      });
+      ctx.bindings.addBinding('alt-fanout', 'q-alt', '', {});
+
+      // Publish with no matching headers
+      const result = doPublish(ctx, 'primary-headers', 'key', body('hello'), {
+        headers: { type: 'normal' },
+      });
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-alt').count()).toBe(1);
+    });
+  });
 });

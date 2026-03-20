@@ -1,5 +1,7 @@
 # T01: Alternate Exchanges
 
+**Status:** done
+
 Implement alternate exchange fallback routing.
 
 ## Scope
