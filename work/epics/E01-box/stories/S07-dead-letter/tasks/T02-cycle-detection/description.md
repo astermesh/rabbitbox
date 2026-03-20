@@ -1,5 +1,7 @@
 # T02: Cycle Detection
 
+**Status:** done
+
 Implement DLX cycle detection matching RabbitMQ's exact algorithm.
 
 ## Scope

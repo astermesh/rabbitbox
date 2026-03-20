@@ -1,5 +1,7 @@
 # S07: Dead Letter Exchanges
 
+**Status:** done
+
 Implement dead letter exchange routing with x-death headers and cycle detection, matching exact RabbitMQ DLX semantics.
 
 ## Scope

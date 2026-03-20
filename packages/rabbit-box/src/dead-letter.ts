@@ -57,6 +57,9 @@ export function deadLetter(
   const dlxExchange = queue.deadLetterExchange;
   if (!deps.exchangeExists(dlxExchange)) return;
 
+  // Cycle detection: rejected reason bypasses entirely (intentional client action)
+  if (reason !== 'rejected' && isDeadLetterCycle(message, queueName)) return;
+
   const dlRoutingKey = queue.deadLetterRoutingKey ?? message.routingKey;
 
   // Read existing x-death array from message headers
