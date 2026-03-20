@@ -138,6 +138,8 @@ export class ExchangeRegistry {
     | ((exchangeName: string) => number)
     | undefined;
   private readonly hooks: ExchangeRegistryHooks;
+  /** Tracks exchanges that have had at least one binding in their lifetime. */
+  private readonly hasHadBindings = new Set<string>();
 
   constructor(options?: {
     bindingCount?: (exchangeName: string) => number;
@@ -260,6 +262,7 @@ export class ExchangeRegistry {
       }
 
       this.exchanges.delete(name);
+      this.hasHadBindings.delete(name);
       return undefined;
     });
   }
@@ -305,6 +308,26 @@ export class ExchangeRegistry {
   /** Get all exchange names. */
   exchangeNames(): string[] {
     return [...this.exchanges.keys()];
+  }
+
+  /** Mark an exchange as having had at least one binding. */
+  markHasHadBindings(name: string): void {
+    this.hasHadBindings.add(name);
+  }
+
+  /**
+   * Check if an exchange is ready for auto-deletion.
+   *
+   * Returns true when the exchange has autoDelete=true, has had at least one
+   * binding in its lifetime, and currently has zero bindings.
+   */
+  isAutoDeleteReady(name: string): boolean {
+    const exchange = this.exchanges.get(name);
+    if (!exchange) return false;
+    if (!exchange.autoDelete) return false;
+    if (!this.hasHadBindings.has(name)) return false;
+    const count = this.bindingCountFn ? this.bindingCountFn(name) : 0;
+    return count === 0;
   }
 
   private initDefaults(): void {

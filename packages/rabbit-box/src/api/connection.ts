@@ -32,6 +32,12 @@ export interface BrokerState {
   readonly now?: () => number;
   /** SBI hooks passed through from RabbitBox.create(). */
   readonly hooks?: Partial<import('@rabbitbox/sbi').RabbitHooks>;
+  /** Perform auto-delete for a queue (full cleanup). */
+  readonly autoDeleteQueue?: (queueName: string) => void;
+  /** Check and perform auto-delete for an exchange after binding removal. */
+  readonly checkExchangeAutoDelete?: (exchangeName: string) => void;
+  /** Mark an exchange as having had bindings. */
+  readonly markExchangeHasHadBindings?: (exchangeName: string) => void;
 }
 
 export class ApiConnection extends EventEmitter<ConnectionEvents> {
@@ -112,6 +118,9 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       authenticatedUserId: this.username,
       now: this.state.now,
       hooks: this.state.hooks,
+      autoDeleteQueue: this.state.autoDeleteQueue,
+      checkExchangeAutoDelete: this.state.checkExchangeAutoDelete,
+      markExchangeHasHadBindings: this.state.markExchangeHasHadBindings,
     });
 
     this.channels.set(num, { api: apiChannel, internal });

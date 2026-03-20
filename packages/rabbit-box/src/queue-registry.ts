@@ -51,6 +51,8 @@ interface QueueEntry {
   ownerConnection?: string;
   messageCount: number;
   consumerCount: number;
+  /** True once at least one consumer has been registered on this queue. */
+  hasHadConsumers: boolean;
 }
 
 /** Optional hooks for queue registry operations. */
@@ -178,6 +180,7 @@ export class QueueRegistry {
           ownerConnection: connectionId,
           messageCount: 0,
           consumerCount: 0,
+          hasHadConsumers: false,
         };
         this.queues.set(generated, entry);
         return { queue: generated, messageCount: 0, consumerCount: 0 };
@@ -260,6 +263,7 @@ export class QueueRegistry {
         ownerConnection: opts.exclusive ? connectionId : undefined,
         messageCount: 0,
         consumerCount: 0,
+        hasHadConsumers: false,
       };
       this.queues.set(name, entry);
       return { queue: name, messageCount: 0, consumerCount: 0 };
@@ -421,8 +425,27 @@ export class QueueRegistry {
   setConsumerCount(name: string, count: number): void {
     const entry = this.queues.get(name);
     if (entry) {
+      if (count > 0) {
+        entry.hasHadConsumers = true;
+      }
       entry.consumerCount = count;
     }
+  }
+
+  /**
+   * Check if a queue is ready for auto-deletion.
+   *
+   * Returns true when the queue has autoDelete=true, has had at least one
+   * consumer in its lifetime, and currently has zero consumers.
+   */
+  isAutoDeleteReady(name: string): boolean {
+    const entry = this.queues.get(name);
+    if (!entry) return false;
+    return (
+      entry.queue.autoDelete &&
+      entry.hasHadConsumers &&
+      entry.consumerCount === 0
+    );
   }
 }
 

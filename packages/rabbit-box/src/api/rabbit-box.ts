@@ -150,6 +150,9 @@ function create(options?: RabbitBoxOptions): ApiConnection {
     timers: obi.timers,
     onExpire: (queueName) => {
       // Queue expiry: delete queue silently, messages NOT dead-lettered
+      const affectedExchanges = bindingStore
+        .getBindingsForQueue(queueName)
+        .map((b) => b.exchange);
       try {
         queueRegistry.deleteQueue(queueName);
       } catch {
@@ -162,8 +165,59 @@ function create(options?: RabbitBoxOptions): ApiConnection {
         consumerRegistry.cancel(consumer.consumerTag);
       }
       messageStores.delete(queueName);
+      // Check auto-delete for exchanges that lost bindings
+      const unique = new Set(affectedExchanges);
+      for (const exchangeName of unique) {
+        checkExchangeAutoDelete(exchangeName);
+      }
     },
   });
+
+  /**
+   * Full queue auto-delete: remove bindings, cancel consumers, delete store.
+   * Messages are discarded (no DLX) per RabbitMQ behavior.
+   */
+  const autoDeleteQueue = (queueName: string): void => {
+    // Collect exchanges that have bindings to this queue before removal
+    const affectedExchanges = bindingStore
+      .getBindingsForQueue(queueName)
+      .map((b) => b.exchange);
+    try {
+      queueRegistry.deleteQueue(queueName);
+    } catch {
+      // Queue might already be deleted — silently ignore
+      return;
+    }
+    bindingStore.removeBindingsForQueue(queueName);
+    const consumers = consumerRegistry.getConsumersForQueue(queueName);
+    for (const consumer of [...consumers]) {
+      consumerRegistry.cancel(consumer.consumerTag);
+    }
+    messageStores.delete(queueName);
+    queueExpiry.unregister(queueName);
+    // Check auto-delete for exchanges that lost bindings
+    const unique = new Set(affectedExchanges);
+    for (const exchangeName of unique) {
+      checkExchangeAutoDelete(exchangeName);
+    }
+  };
+
+  /**
+   * Check and perform auto-delete for an exchange after binding removal.
+   */
+  const checkExchangeAutoDelete = (exchangeName: string): void => {
+    if (exchangeRegistry.isAutoDeleteReady(exchangeName)) {
+      exchangeRegistry.deleteExchange(exchangeName);
+      bindingStore.removeBindingsForExchange(exchangeName);
+    }
+  };
+
+  /**
+   * Mark an exchange as having had bindings (for auto-delete tracking).
+   */
+  const markExchangeHasHadBindings = (exchangeName: string): void => {
+    exchangeRegistry.markHasHadBindings(exchangeName);
+  };
 
   const state = {
     exchangeRegistry,
@@ -177,6 +231,9 @@ function create(options?: RabbitBoxOptions): ApiConnection {
     onExpire: handleExpiredMessage,
     now: () => obi.time.now(),
     hooks,
+    autoDeleteQueue,
+    checkExchangeAutoDelete,
+    markExchangeHasHadBindings,
   };
 
   return new ApiConnection(connectionId, state, options?.username);
