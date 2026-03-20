@@ -386,6 +386,11 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     options?: ConsumeOptions
   ): Promise<ConsumeResult> {
     this.assertOpen();
+    // Mark queue as SAC before registering (idempotent)
+    const queueDef = this.deps.queueRegistry.getQueue(queue);
+    if (queueDef?.singleActiveConsumer) {
+      this.deps.consumerRegistry.markSingleActiveConsumer(queue);
+    }
     const consumerTag = this.deps.consumerRegistry.register(
       queue,
       this.deps.channel.channelNumber,
@@ -422,6 +427,17 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
       // Reset expiry timer on cancel if consumers remain
       if (newCount > 0) {
         this.deps.queueExpiry.resetActivity(entry.queueName);
+      }
+      // SAC failover: dispatch pending messages to new active consumer
+      if (
+        newCount > 0 &&
+        this.deps.consumerRegistry.isSingleActiveConsumer(entry.queueName)
+      ) {
+        this.deps.dispatcher.dispatch(
+          entry.queueName,
+          this.deps.getMessageStore(entry.queueName),
+          this.deps.getChannel
+        );
       }
       // Auto-delete queue when last consumer is cancelled
       if (
@@ -536,6 +552,17 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     for (const queueName of affectedQueues) {
       const newCount = this.deps.consumerRegistry.getConsumerCount(queueName);
       this.deps.queueRegistry.setConsumerCount(queueName, newCount);
+      // SAC failover: dispatch pending messages to new active consumer
+      if (
+        newCount > 0 &&
+        this.deps.consumerRegistry.isSingleActiveConsumer(queueName)
+      ) {
+        this.deps.dispatcher.dispatch(
+          queueName,
+          this.deps.getMessageStore(queueName),
+          this.deps.getChannel
+        );
+      }
       if (
         newCount === 0 &&
         this.deps.autoDeleteQueue &&

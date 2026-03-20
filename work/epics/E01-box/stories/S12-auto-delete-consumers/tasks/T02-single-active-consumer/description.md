@@ -1,5 +1,7 @@
 # T02: Single Active Consumer
 
+**Status:** done
+
 Implement the single active consumer queue option.
 
 ## Scope

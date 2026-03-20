@@ -748,6 +748,310 @@ describe('Dispatcher', () => {
     });
   });
 
+  // ── Single active consumer ───────────────────────────────────────
+
+  describe('single active consumer', () => {
+    it('delivers all messages to the active (first) consumer only', async () => {
+      const ch1 = new Channel(1, makeDeps());
+      const ch2 = new Channel(2, makeDeps());
+      const received1: string[] = [];
+      const received2: string[] = [];
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      registry.register(
+        'q1',
+        1,
+        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+      registry.register(
+        'q1',
+        2,
+        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+
+      store.enqueue(makeMessage('a'));
+      store.enqueue(makeMessage('b'));
+      store.enqueue(makeMessage('c'));
+
+      dispatcher.dispatch('q1', store, (ch) => {
+        if (ch === 1) return ch1;
+        if (ch === 2) return ch2;
+        return undefined;
+      });
+      await flushMicrotasks();
+
+      expect(received1).toEqual(['a', 'b', 'c']);
+      expect(received2).toEqual([]);
+    });
+
+    it('inactive consumers receive nothing', async () => {
+      const ch1 = new Channel(1, makeDeps());
+      const ch2 = new Channel(2, makeDeps());
+      const ch3 = new Channel(3, makeDeps());
+      const received2: DeliveredMessage[] = [];
+      const received3: DeliveredMessage[] = [];
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      registry.register('q1', 1, vi.fn(), { noAck: true });
+      registry.register('q1', 2, (msg) => received2.push(msg), {
+        noAck: true,
+      });
+      registry.register('q1', 3, (msg) => received3.push(msg), {
+        noAck: true,
+      });
+
+      store.enqueue(makeMessage('a'));
+      store.enqueue(makeMessage('b'));
+
+      dispatcher.dispatch('q1', store, (ch) => {
+        if (ch === 1) return ch1;
+        if (ch === 2) return ch2;
+        if (ch === 3) return ch3;
+        return undefined;
+      });
+      await flushMicrotasks();
+
+      expect(received2).toEqual([]);
+      expect(received3).toEqual([]);
+    });
+
+    it('failover to next consumer when active is cancelled', async () => {
+      const ch1 = new Channel(1, makeDeps());
+      const ch2 = new Channel(2, makeDeps());
+      const received1: string[] = [];
+      const received2: string[] = [];
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      const tag1 = registry.register(
+        'q1',
+        1,
+        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+      registry.register(
+        'q1',
+        2,
+        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+
+      const getChannel = (ch: number) => {
+        if (ch === 1) return ch1;
+        if (ch === 2) return ch2;
+        return undefined;
+      };
+
+      // Deliver first message to active consumer
+      store.enqueue(makeMessage('a'));
+      dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
+      expect(received1).toEqual(['a']);
+
+      // Cancel active consumer, second becomes active
+      registry.cancel(tag1);
+
+      // Deliver to new active consumer
+      store.enqueue(makeMessage('b'));
+      dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
+
+      expect(received2).toEqual(['b']);
+    });
+
+    it('preserves registration order for activation', async () => {
+      const ch1 = new Channel(1, makeDeps());
+      const ch2 = new Channel(2, makeDeps());
+      const ch3 = new Channel(3, makeDeps());
+      const received1: string[] = [];
+      const received2: string[] = [];
+      const received3: string[] = [];
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      const tag1 = registry.register(
+        'q1',
+        1,
+        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+      const tag2 = registry.register(
+        'q1',
+        2,
+        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+      registry.register(
+        'q1',
+        3,
+        (msg) => received3.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+
+      const getChannel = (ch: number) => {
+        if (ch === 1) return ch1;
+        if (ch === 2) return ch2;
+        if (ch === 3) return ch3;
+        return undefined;
+      };
+
+      store.enqueue(makeMessage('a'));
+      dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
+      expect(received1).toEqual(['a']);
+
+      // Cancel first, second becomes active
+      registry.cancel(tag1);
+      store.enqueue(makeMessage('b'));
+      dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
+      expect(received2).toEqual(['b']);
+
+      // Cancel second, third becomes active
+      registry.cancel(tag2);
+      store.enqueue(makeMessage('c'));
+      dispatcher.dispatch('q1', store, getChannel);
+      await flushMicrotasks();
+      expect(received3).toEqual(['c']);
+    });
+
+    it('respects prefetch for active consumer', async () => {
+      const channel = new Channel(1, makeDeps());
+      channel.setPrefetch(2, false);
+      const received: string[] = [];
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      registry.register(
+        'q1',
+        1,
+        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        {}
+      );
+      registry.register('q1', 2, vi.fn(), {});
+
+      store.enqueue(makeMessage('a'));
+      store.enqueue(makeMessage('b'));
+      store.enqueue(makeMessage('c'));
+
+      dispatcher.dispatch('q1', store, (ch) =>
+        ch === 1 ? channel : new Channel(2, makeDeps())
+      );
+      await flushMicrotasks();
+
+      // Active consumer gets 2 messages (prefetch limit), third stays
+      // Second consumer (inactive) gets nothing despite being available
+      expect(received).toEqual(['a', 'b']);
+      expect(store.count()).toBe(1);
+    });
+
+    it('messages accumulate when no consumers registered on SAC queue', () => {
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      store.enqueue(makeMessage('a'));
+      store.enqueue(makeMessage('b'));
+
+      dispatcher.dispatch('q1', store, () => undefined);
+
+      expect(store.count()).toBe(2);
+    });
+
+    it('does not deliver when active consumer channel is unavailable', async () => {
+      const ch2 = new Channel(2, makeDeps());
+      const received1: string[] = [];
+      const received2: string[] = [];
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      registry.register(
+        'q1',
+        1,
+        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+      registry.register(
+        'q1',
+        2,
+        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+
+      store.enqueue(makeMessage('a'));
+
+      // Channel 1 not available — but SAC means only active consumer matters
+      // Messages should stay in queue (not fall through to inactive consumer)
+      dispatcher.dispatch('q1', store, (ch) => (ch === 2 ? ch2 : undefined));
+      await flushMicrotasks();
+
+      expect(received1).toEqual([]);
+      expect(received2).toEqual([]);
+      expect(store.count()).toBe(1);
+    });
+
+    it('does not deliver when active consumer flow is paused', async () => {
+      const ch1 = new Channel(1, makeDeps());
+      ch1.setFlow(false);
+      const received: string[] = [];
+      const store = new MessageStore();
+
+      registry.markSingleActiveConsumer('q1');
+      registry.register(
+        'q1',
+        1,
+        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+
+      store.enqueue(makeMessage('a'));
+
+      dispatcher.dispatch('q1', store, (ch) => (ch === 1 ? ch1 : undefined));
+      await flushMicrotasks();
+
+      expect(received).toEqual([]);
+      expect(store.count()).toBe(1);
+    });
+
+    it('non-SAC queue still uses round-robin', async () => {
+      const ch1 = new Channel(1, makeDeps());
+      const ch2 = new Channel(2, makeDeps());
+      const received1: string[] = [];
+      const received2: string[] = [];
+      const store = new MessageStore();
+
+      // No markSingleActiveConsumer — regular queue
+      registry.register(
+        'q1',
+        1,
+        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+      registry.register(
+        'q1',
+        2,
+        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        { noAck: true }
+      );
+
+      store.enqueue(makeMessage('a'));
+      store.enqueue(makeMessage('b'));
+
+      dispatcher.dispatch('q1', store, (ch) => {
+        if (ch === 1) return ch1;
+        if (ch === 2) return ch2;
+        return undefined;
+      });
+      await flushMicrotasks();
+
+      expect(received1).toEqual(['a']);
+      expect(received2).toEqual(['b']);
+    });
+  });
+
   // ── Edge cases ────────────────────────────────────────────────────
 
   describe('edge cases', () => {

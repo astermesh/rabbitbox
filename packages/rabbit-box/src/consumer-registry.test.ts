@@ -252,4 +252,63 @@ describe('ConsumerRegistry', () => {
       }
     });
   });
+
+  // ── Single active consumer ─────────────────────────────────────────
+
+  describe('single active consumer', () => {
+    it('marks a queue as single-active-consumer', () => {
+      registry.markSingleActiveConsumer('q1');
+      expect(registry.isSingleActiveConsumer('q1')).toBe(true);
+    });
+
+    it('returns false for queues not marked as SAC', () => {
+      expect(registry.isSingleActiveConsumer('q1')).toBe(false);
+    });
+
+    it('getActiveConsumer returns first registered consumer for SAC queue', () => {
+      registry.markSingleActiveConsumer('q1');
+      const tag1 = registry.register('q1', 1, callback, {});
+      registry.register('q1', 2, callback, {});
+      const active = registry.getActiveConsumer('q1');
+      expect(active).toBeDefined();
+      expect(active?.consumerTag).toBe(tag1);
+    });
+
+    it('getActiveConsumer returns undefined for non-SAC queue', () => {
+      registry.register('q1', 1, callback, {});
+      expect(registry.getActiveConsumer('q1')).toBeUndefined();
+    });
+
+    it('getActiveConsumer returns undefined when SAC queue has no consumers', () => {
+      registry.markSingleActiveConsumer('q1');
+      expect(registry.getActiveConsumer('q1')).toBeUndefined();
+    });
+
+    it('getActiveConsumer promotes next consumer after active is cancelled', () => {
+      registry.markSingleActiveConsumer('q1');
+      const tag1 = registry.register('q1', 1, callback, {});
+      const tag2 = registry.register('q1', 2, callback, {});
+      registry.cancel(tag1);
+      const active = registry.getActiveConsumer('q1');
+      expect(active?.consumerTag).toBe(tag2);
+    });
+
+    it('getActiveConsumer returns undefined after all consumers cancelled', () => {
+      registry.markSingleActiveConsumer('q1');
+      const tag1 = registry.register('q1', 1, callback, {});
+      registry.cancel(tag1);
+      expect(registry.getActiveConsumer('q1')).toBeUndefined();
+    });
+
+    it('preserves registration order for activation after cancelByChannel', () => {
+      registry.markSingleActiveConsumer('q1');
+      registry.register('q1', 1, callback, {}); // active (ch 1)
+      const tag2 = registry.register('q1', 2, callback, {}); // waiting (ch 2)
+      registry.register('q1', 1, callback, {}); // waiting (ch 1)
+
+      registry.cancelByChannel(1); // removes first and third
+      const active = registry.getActiveConsumer('q1');
+      expect(active?.consumerTag).toBe(tag2);
+    });
+  });
 });
