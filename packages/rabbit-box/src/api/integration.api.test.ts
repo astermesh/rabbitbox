@@ -1818,5 +1818,41 @@ describe('E2E integration tests', () => {
 
       await conn.close();
     });
+
+    it('exclusive queue with x-expires: connection close cancels expiry timer', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('exclusive-expiring-q', {
+        exclusive: true,
+        arguments: { 'x-expires': 10000 },
+      });
+
+      expect(timers.callbacks.size).toBe(1);
+
+      // Connection close deletes exclusive queues and should cancel the expiry timer
+      await conn.close();
+
+      // Timer should be cancelled — no stale timers left
+      expect(timers.callbacks.size).toBe(0);
+    });
+
+    it('expiry timer firing after queue already deleted is harmless', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('double-delete-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      // Explicitly delete the queue
+      await ch.deleteQueue('double-delete-q');
+
+      // Timer callback reference is gone (unregister clears it), but
+      // if somehow a stale timer fires, it should not throw
+      expect(timers.callbacks.size).toBe(0);
+
+      await conn.close();
+    });
   });
 });

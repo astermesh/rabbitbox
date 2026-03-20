@@ -151,6 +151,7 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       } catch {
         // Queue might already be deleted — silently ignore
       }
+      this.state.queueExpiry.unregister(name);
     }
     this.exclusiveQueues.clear();
 

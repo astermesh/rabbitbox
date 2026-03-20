@@ -153,7 +153,6 @@ function create(options?: RabbitBoxOptions): ApiConnection {
         consumerRegistry.cancel(consumer.consumerTag);
       }
       messageStores.delete(queueName);
-      queueExpiry.unregister(queueName);
     },
   });
 
