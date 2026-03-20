@@ -69,6 +69,8 @@ export { Dispatcher } from './dispatcher.ts';
 export type { DispatcherOptions } from './dispatcher.ts';
 export { runHooked } from './hook-runner.ts';
 export { QueueRegistry } from './queue-registry.ts';
+export { QueueExpiry, validateExpires } from './queue-expiry.ts';
+export type { QueueExpiryOptions } from './queue-expiry.ts';
 export type {
   DeclareQueueOptions,
   DeleteQueueOptions,

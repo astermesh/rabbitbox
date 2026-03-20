@@ -1,5 +1,7 @@
 # T02: Queue Expiry
 
+**Status:** done
+
 Implement queue auto-deletion after idle timeout.
 
 ## Scope

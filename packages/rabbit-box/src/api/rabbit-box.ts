@@ -4,6 +4,7 @@ import { BindingStore } from '../binding-store.ts';
 import { ConsumerRegistry } from '../consumer-registry.ts';
 import { MessageStore } from '../message-store.ts';
 import { Dispatcher } from '../dispatcher.ts';
+import { QueueExpiry } from '../queue-expiry.ts';
 import { deadLetterExpired } from '../dead-letter.ts';
 import { publish as publishMessage } from '../publish.ts';
 import { createDefaultObiHooks } from '../obi/defaults.ts';
@@ -136,6 +137,25 @@ function create(options?: RabbitBoxOptions): ApiConnection {
     onExpire: handleExpiredMessage,
   });
 
+  const queueExpiry = new QueueExpiry({
+    timers: obi.timers,
+    onExpire: (queueName) => {
+      // Queue expiry: delete queue silently, messages NOT dead-lettered
+      try {
+        queueRegistry.deleteQueue(queueName);
+      } catch {
+        // Queue might already be deleted — silently ignore
+        return;
+      }
+      bindingStore.removeBindingsForQueue(queueName);
+      const consumers = consumerRegistry.getConsumersForQueue(queueName);
+      for (const consumer of [...consumers]) {
+        consumerRegistry.cancel(consumer.consumerTag);
+      }
+      messageStores.delete(queueName);
+    },
+  });
+
   const state = {
     exchangeRegistry,
     queueRegistry,
@@ -144,6 +164,7 @@ function create(options?: RabbitBoxOptions): ApiConnection {
     dispatcher,
     messageStores,
     getMessageStore,
+    queueExpiry,
     onExpire: handleExpiredMessage,
     now: () => obi.time.now(),
     hooks,

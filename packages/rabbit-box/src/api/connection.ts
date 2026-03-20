@@ -4,6 +4,7 @@ import type { BindingStore } from '../binding-store.ts';
 import type { ConsumerRegistry } from '../consumer-registry.ts';
 import type { MessageStore } from '../message-store.ts';
 import type { Dispatcher } from '../dispatcher.ts';
+import type { QueueExpiry } from '../queue-expiry.ts';
 import { Channel } from '../channel.ts';
 import { connectionError } from '../errors/factories.ts';
 import { EventEmitter } from './event-emitter.ts';
@@ -23,6 +24,8 @@ export interface BrokerState {
   readonly messageStores: Map<string, MessageStore>;
   /** Lazy-create and return the message store for a queue. */
   readonly getMessageStore: (queueName: string) => MessageStore;
+  /** Queue expiry manager (x-expires). */
+  readonly queueExpiry: QueueExpiry;
   /** Called when a message expires (TTL). Used for dead-lettering. */
   readonly onExpire?: (queueName: string, message: BrokerMessage) => void;
   /** Time provider for TTL expiry checks. */
@@ -105,6 +108,7 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       registerExclusiveQueue: (name) => this.registerExclusiveQueue(name),
       removeMessageStore: (name) => this.state.messageStores.delete(name),
       getAllQueueNames: () => this.state.messageStores.keys(),
+      queueExpiry: this.state.queueExpiry,
       authenticatedUserId: this.username,
       now: this.state.now,
       hooks: this.state.hooks,
@@ -147,6 +151,7 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       } catch {
         // Queue might already be deleted — silently ignore
       }
+      this.state.queueExpiry.unregister(name);
     }
     this.exclusiveQueues.clear();
 

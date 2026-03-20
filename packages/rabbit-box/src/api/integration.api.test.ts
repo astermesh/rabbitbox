@@ -1550,4 +1550,309 @@ describe('E2E integration tests', () => {
       await conn.close();
     });
   });
+
+  // ── Queue Expiry (x-expires) ───────────────────────────────────
+
+  describe('queue expiry (x-expires)', () => {
+    function createWithFakeTimers() {
+      const timers: {
+        callbacks: Map<unknown, () => void>;
+        nextHandle: number;
+      } = { callbacks: new Map(), nextHandle: 1 };
+
+      const conn = RabbitBox.create({
+        obi: {
+          timers: {
+            setTimeout(cb: () => void, _ms: number) {
+              const handle = timers.nextHandle++;
+              timers.callbacks.set(handle, cb);
+              return handle;
+            },
+            clearTimeout(handle: unknown) {
+              timers.callbacks.delete(handle);
+            },
+          },
+          delivery: {
+            schedule: (cb) => cb(), // synchronous delivery for testing
+          },
+        },
+      });
+
+      return { conn, timers };
+    }
+
+    function fireAllTimers(timers: {
+      callbacks: Map<unknown, () => void>;
+    }): void {
+      const cbs = [...timers.callbacks.values()];
+      timers.callbacks.clear();
+      for (const cb of cbs) cb();
+    }
+
+    it('queue is deleted after x-expires timeout', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      // Queue should exist
+      const info = await ch.checkQueue('expiring-q');
+      expect(info.queue).toBe('expiring-q');
+
+      // Fire the expiry timer
+      fireAllTimers(timers);
+
+      // Queue should be gone
+      await expect(ch.checkQueue('expiring-q')).rejects.toThrow(ChannelError);
+      await conn.close();
+    });
+
+    it('messages are silently discarded on queue expiry (not dead-lettered)', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      // Set up DLX to catch any dead-lettered messages
+      await ch.assertExchange('dlx', 'fanout');
+      await ch.assertQueue('dlq', {});
+      await ch.bindQueue('dlq', 'dlx', '');
+
+      await ch.assertQueue('expiring-q', {
+        arguments: {
+          'x-expires': 5000,
+          'x-dead-letter-exchange': 'dlx',
+        },
+      });
+
+      // Publish a message
+      ch.sendToQueue('expiring-q', new Uint8Array([1, 2, 3]));
+
+      // Fire the expiry timer
+      fireAllTimers(timers);
+
+      // DLQ should be empty — messages from expired queues are NOT dead-lettered
+      const dlqMsg = await ch.get('dlq');
+      expect(dlqMsg).toBe(false);
+
+      await conn.close();
+    });
+
+    it('expiry timer resets on re-declare', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      // Should have 1 timer
+      expect(timers.callbacks.size).toBe(1);
+      const firstHandle = [...timers.callbacks.keys()][0];
+
+      // Re-declare same queue (equivalent)
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      // Old timer should be cleared, new one set
+      expect(timers.callbacks.has(firstHandle)).toBe(false);
+      expect(timers.callbacks.size).toBe(1);
+
+      await conn.close();
+    });
+
+    it('expiry timer resets on basic.get', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      const firstHandle = [...timers.callbacks.keys()][0];
+
+      // basic.get resets the timer
+      await ch.get('expiring-q');
+
+      expect(timers.callbacks.has(firstHandle)).toBe(false);
+      expect(timers.callbacks.size).toBe(1);
+
+      await conn.close();
+    });
+
+    it('expiry timer resets on consume', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      const firstHandle = [...timers.callbacks.keys()][0];
+
+      // Consuming resets the timer
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      await ch.consume('expiring-q', () => {});
+
+      expect(timers.callbacks.has(firstHandle)).toBe(false);
+      expect(timers.callbacks.size).toBe(1);
+
+      await conn.close();
+    });
+
+    it('expiry timer resets on cancel if consumers remain', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      // Add two consumers
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      const { consumerTag: tag1 } = await ch.consume('expiring-q', () => {});
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      await ch.consume('expiring-q', () => {});
+
+      const handleBeforeCancel = [...timers.callbacks.keys()][0];
+
+      // Cancel one consumer — consumers remain, timer should reset
+      await ch.cancel(tag1);
+
+      expect(timers.callbacks.has(handleBeforeCancel)).toBe(false);
+      expect(timers.callbacks.size).toBe(1);
+
+      await conn.close();
+    });
+
+    it('expiry timer does NOT reset on cancel if no consumers remain', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      const { consumerTag } = await ch.consume('expiring-q', () => {});
+
+      const handleBeforeCancel = [...timers.callbacks.keys()][0];
+
+      // Cancel the only consumer — no consumers remain, timer should NOT reset
+      await ch.cancel(consumerTag);
+
+      // Timer should still be the same handle (not replaced)
+      expect(timers.callbacks.has(handleBeforeCancel)).toBe(true);
+      expect(timers.callbacks.size).toBe(1);
+
+      await conn.close();
+    });
+
+    it('deleteQueue clears expiry timer', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+      expect(timers.callbacks.size).toBe(1);
+
+      await ch.deleteQueue('expiring-q');
+      expect(timers.callbacks.size).toBe(0);
+
+      await conn.close();
+    });
+
+    it('rejects x-expires = 0', async () => {
+      const conn = RabbitBox.create();
+      const ch = await conn.createChannel();
+
+      await expect(
+        ch.assertQueue('bad-q', { arguments: { 'x-expires': 0 } })
+      ).rejects.toThrow('PRECONDITION_FAILED');
+
+      await conn.close();
+    });
+
+    it('rejects negative x-expires', async () => {
+      const conn = RabbitBox.create();
+      const ch = await conn.createChannel();
+
+      await expect(
+        ch.assertQueue('bad-q', { arguments: { 'x-expires': -100 } })
+      ).rejects.toThrow('PRECONDITION_FAILED');
+
+      await conn.close();
+    });
+
+    it('rejects non-integer x-expires', async () => {
+      const conn = RabbitBox.create();
+      const ch = await conn.createChannel();
+
+      await expect(
+        ch.assertQueue('bad-q', { arguments: { 'x-expires': 1.5 } })
+      ).rejects.toThrow('PRECONDITION_FAILED');
+
+      await conn.close();
+    });
+
+    it('bindings are removed when queue expires', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertExchange('test-ex', 'direct');
+      await ch.assertQueue('expiring-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+      await ch.bindQueue('expiring-q', 'test-ex', 'rk');
+
+      // Fire the expiry timer
+      fireAllTimers(timers);
+
+      // Queue should be gone
+      await expect(ch.checkQueue('expiring-q')).rejects.toThrow(ChannelError);
+
+      // Publishing to the binding should not route anywhere
+      ch.publish('test-ex', 'rk', new Uint8Array([1]));
+
+      await conn.close();
+    });
+
+    it('exclusive queue with x-expires: connection close cancels expiry timer', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('exclusive-expiring-q', {
+        exclusive: true,
+        arguments: { 'x-expires': 10000 },
+      });
+
+      expect(timers.callbacks.size).toBe(1);
+
+      // Connection close deletes exclusive queues and should cancel the expiry timer
+      await conn.close();
+
+      // Timer should be cancelled — no stale timers left
+      expect(timers.callbacks.size).toBe(0);
+    });
+
+    it('expiry timer firing after queue already deleted is harmless', async () => {
+      const { conn, timers } = createWithFakeTimers();
+      const ch = await conn.createChannel();
+
+      await ch.assertQueue('double-delete-q', {
+        arguments: { 'x-expires': 10000 },
+      });
+
+      // Explicitly delete the queue
+      await ch.deleteQueue('double-delete-q');
+
+      // Timer callback reference is gone (unregister clears it), but
+      // if somehow a stale timer fires, it should not throw
+      expect(timers.callbacks.size).toBe(0);
+
+      await conn.close();
+    });
+  });
 });

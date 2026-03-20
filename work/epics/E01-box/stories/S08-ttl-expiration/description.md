@@ -1,5 +1,7 @@
 # S08: TTL & Expiration
 
+**Status:** done
+
 Implement message TTL (per-queue and per-message) and queue expiry with exact RabbitMQ semantics.
 
 ## Scope
