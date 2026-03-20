@@ -60,6 +60,7 @@ function createTagGenerator(): () => string {
 export class ConsumerRegistry {
   private readonly byTag = new Map<string, ConsumerEntry>();
   private readonly byQueue = new Map<string, ConsumerEntry[]>();
+  private readonly sacQueues = new Set<string>();
   private readonly generateTag: () => string;
   private readonly queueExists: ((name: string) => boolean) | undefined;
   private readonly hooks: ConsumerRegistryHooks;
@@ -112,6 +113,15 @@ export class ConsumerRegistry {
       if (this.byTag.has(consumerTag)) {
         throw connectionError.notAllowed(
           `attempt to reuse consumer tag '${consumerTag}'`,
+          BASIC_CLASS,
+          BASIC_CONSUME
+        );
+      }
+
+      // SAC + exclusive consumer are mutually exclusive (real RabbitMQ rejects this)
+      if (exclusive && this.sacQueues.has(queueName)) {
+        throw channelError.accessRefused(
+          `cannot set exclusive consumer on a queue with single active consumer enabled '${queueName}'`,
           BASIC_CLASS,
           BASIC_CONSUME
         );
@@ -260,5 +270,27 @@ export class ConsumerRegistry {
     if (entry && entry.unackedCount > 0) {
       entry.unackedCount--;
     }
+  }
+
+  /** Mark a queue as using single active consumer semantics. */
+  markSingleActiveConsumer(queueName: string): void {
+    this.sacQueues.add(queueName);
+  }
+
+  /** Check if a queue uses single active consumer semantics. */
+  isSingleActiveConsumer(queueName: string): boolean {
+    return this.sacQueues.has(queueName);
+  }
+
+  /**
+   * Get the active consumer for a single active consumer queue.
+   *
+   * Returns the first consumer in registration order (FIFO),
+   * or undefined if the queue is not SAC or has no consumers.
+   */
+  getActiveConsumer(queueName: string): ConsumerEntry | undefined {
+    if (!this.sacQueues.has(queueName)) return undefined;
+    const consumers = this.byQueue.get(queueName);
+    return consumers?.[0];
   }
 }

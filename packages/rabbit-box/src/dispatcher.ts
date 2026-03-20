@@ -67,6 +67,15 @@ export class Dispatcher {
     const consumers = this.registry.getConsumersForQueue(queueName);
     if (consumers.length === 0) return;
 
+    // Single active consumer: deliver only to the active (first) consumer
+    if (this.registry.isSingleActiveConsumer(queueName)) {
+      const activeConsumer = consumers[0];
+      if (activeConsumer) {
+        this.dispatchSAC(activeConsumer, store, getChannel);
+      }
+      return;
+    }
+
     let startIndex = this.rrIndex.get(queueName) ?? 0;
 
     while (store.count() > 0) {
@@ -85,6 +94,44 @@ export class Dispatcher {
       this.deliver(consumer, channel, message);
       startIndex = nextIndex;
       this.rrIndex.set(queueName, startIndex);
+    }
+  }
+
+  /**
+   * Dispatch messages to the single active consumer only.
+   *
+   * Respects prefetch limits. Messages stay in the queue when
+   * the active consumer is unavailable or at its prefetch limit.
+   * Inactive consumers never receive messages.
+   */
+  private dispatchSAC(
+    activeConsumer: ConsumerEntry,
+    store: IMessageStore,
+    getChannel: (channelNumber: number) => Channel | undefined
+  ): void {
+    const channel = getChannel(activeConsumer.channelNumber);
+    if (!channel || !channel.isFlowActive()) return;
+
+    while (store.count() > 0) {
+      if (!activeConsumer.noAck) {
+        if (
+          channel.consumerPrefetch > 0 &&
+          activeConsumer.unackedCount >= channel.consumerPrefetch
+        ) {
+          break;
+        }
+        if (
+          channel.channelPrefetch > 0 &&
+          channel.unackedCount >= channel.channelPrefetch
+        ) {
+          break;
+        }
+      }
+
+      const message = store.dequeue();
+      if (!message) break;
+
+      this.deliver(activeConsumer, channel, message);
     }
   }
 
