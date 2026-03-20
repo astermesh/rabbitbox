@@ -1,5 +1,7 @@
 # T03: Consumer Cancellation Notifications
 
+**Status:** done
+
 Implement server-initiated consumer cancellation and consumer priorities.
 
 ## Scope

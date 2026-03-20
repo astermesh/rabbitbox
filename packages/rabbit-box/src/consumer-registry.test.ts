@@ -10,7 +10,7 @@ import {
 
 describe('ConsumerRegistry', () => {
   let registry: ConsumerRegistry;
-  let callback: (msg: DeliveredMessage) => void;
+  let callback: (msg: DeliveredMessage | null) => void;
 
   beforeEach(() => {
     registry = new ConsumerRegistry();

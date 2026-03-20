@@ -70,6 +70,7 @@ export interface ConsumeOptions {
   readonly consumerTag?: string;
   readonly noAck?: boolean;
   readonly exclusive?: boolean;
+  readonly arguments?: Record<string, unknown>;
 }
 
 /** Result of consume. */
@@ -102,6 +103,7 @@ export interface ChannelEvents {
   drain: () => void;
   ack: (confirm: ConfirmEvent) => void;
   nack: (confirm: ConfirmEvent) => void;
+  cancel: (consumerTag: string) => void;
 }
 
 /** A message returned via basic.return. */

@@ -22,7 +22,7 @@ function collectMessages(
   timeout = 500
 ): {
   msgs: DeliveredMessage[];
-  callback: (msg: DeliveredMessage) => void;
+  callback: (msg: DeliveredMessage | null) => void;
   done: Promise<DeliveredMessage[]>;
 } {
   const msgs: DeliveredMessage[] = [];
@@ -31,7 +31,8 @@ function collectMessages(
     resolve = r;
   });
   const timer = setTimeout(() => resolve(msgs), timeout);
-  const callback = (msg: DeliveredMessage) => {
+  const callback = (msg: DeliveredMessage | null) => {
+    if (!msg) return;
     msgs.push(msg);
     if (msgs.length >= count) {
       clearTimeout(timer);
@@ -150,7 +151,13 @@ describe('E2E integration tests', () => {
       await ch.bindQueue('topic-q1', 'ex.topic', 'stock.*.nyse');
 
       const msgs: DeliveredMessage[] = [];
-      await ch.consume('topic-q1', (m) => msgs.push(m), { noAck: true });
+      await ch.consume(
+        'topic-q1',
+        (m) => {
+          if (m) msgs.push(m);
+        },
+        { noAck: true }
+      );
 
       // Should NOT match — zero words between stock and nyse
       ch.publish('ex.topic', 'stock.nyse', new Uint8Array([1]));
@@ -358,7 +365,13 @@ describe('E2E integration tests', () => {
       await ch.bindQueue('dq-miss', 'ex.direct', 'key-x');
 
       const msgs: DeliveredMessage[] = [];
-      await ch.consume('dq-miss', (m) => msgs.push(m), { noAck: true });
+      await ch.consume(
+        'dq-miss',
+        (m) => {
+          if (m) msgs.push(m);
+        },
+        { noAck: true }
+      );
 
       ch.publish('ex.direct', 'key-y', new Uint8Array([1]));
       await tick(50);
@@ -377,7 +390,8 @@ describe('E2E integration tests', () => {
       await ch.assertQueue('rr-q');
 
       const received: number[] = [];
-      const makeHandler = (id: number) => (msg: DeliveredMessage) => {
+      const makeHandler = (id: number) => (msg: DeliveredMessage | null) => {
+        if (!msg) return;
         received.push(id);
         ch.ack(msg);
       };
@@ -410,7 +424,9 @@ describe('E2E integration tests', () => {
       await ch.prefetch(2);
 
       const msgs: DeliveredMessage[] = [];
-      await ch.consume('pf-q', (msg) => msgs.push(msg));
+      await ch.consume('pf-q', (msg) => {
+        if (msg) msgs.push(msg);
+      });
 
       // Send 5 messages
       for (let i = 0; i < 5; i++) {
@@ -469,6 +485,7 @@ describe('E2E integration tests', () => {
 
       const msgs: DeliveredMessage[] = [];
       await ch.consume('nack-q', (msg) => {
+        if (!msg) return;
         msgs.push(msg);
         if (!msg.redelivered) {
           ch.nack(msg, false, true);
@@ -492,6 +509,7 @@ describe('E2E integration tests', () => {
 
       const msgs: DeliveredMessage[] = [];
       await ch.consume('reject-q', (msg) => {
+        if (!msg) return;
         msgs.push(msg);
         ch.reject(msg, false);
       });
@@ -519,6 +537,7 @@ describe('E2E integration tests', () => {
       const consumer2Msgs: DeliveredMessage[] = [];
 
       await ch.consume('rq-q', (msg) => {
+        if (!msg) return;
         consumer1Msgs.push(msg);
         // Nack with requeue on first delivery
         ch.nack(msg, false, true);
@@ -528,6 +547,7 @@ describe('E2E integration tests', () => {
       const ch2 = await conn.createChannel();
       await ch2.prefetch(1);
       await ch2.consume('rq-q', (msg) => {
+        if (!msg) return;
         consumer2Msgs.push(msg);
         ch2.ack(msg);
       });
@@ -797,10 +817,12 @@ describe('E2E integration tests', () => {
       const msgs1: DeliveredMessage[] = [];
       const msgs2: DeliveredMessage[] = [];
       await ch.consume('multi-ch-q1', (m) => {
+        if (!m) return;
         msgs1.push(m);
         ch.ack(m);
       });
       await ch2.consume('multi-ch-q2', (m) => {
+        if (!m) return;
         msgs2.push(m);
         ch2.ack(m);
       });
@@ -1665,7 +1687,13 @@ describe('E2E integration tests', () => {
       await ch.bindQueue('q1', 'dest', '');
 
       const msgs: DeliveredMessage[] = [];
-      await ch.consume('q1', (m) => msgs.push(m), { noAck: true });
+      await ch.consume(
+        'q1',
+        (m) => {
+          if (m) msgs.push(m);
+        },
+        { noAck: true }
+      );
 
       // Should match
       ch.publish('source', 'log.info', new Uint8Array([1]));

@@ -18,6 +18,9 @@ export interface ConsumeOptions {
   readonly consumerTag?: string;
   readonly exclusive?: boolean;
   readonly noAck?: boolean;
+  readonly priority?: number;
+  /** Callback invoked on server-initiated cancellation (queue delete, auto-delete). */
+  readonly onServerCancel?: () => void;
 }
 
 /** Internal mutable consumer entry. */
@@ -25,9 +28,12 @@ export interface ConsumerEntry {
   readonly consumerTag: string;
   readonly queueName: string;
   readonly channelNumber: number;
-  readonly callback: (msg: DeliveredMessage) => void;
+  readonly callback: (msg: DeliveredMessage | null) => void;
   readonly noAck: boolean;
   readonly exclusive: boolean;
+  readonly priority: number;
+  /** Callback invoked on server-initiated cancellation. */
+  readonly onServerCancel?: () => void;
   unackedCount: number;
 }
 
@@ -79,12 +85,13 @@ export class ConsumerRegistry {
   register(
     queueName: string,
     channelNumber: number,
-    callback: (msg: DeliveredMessage) => void,
+    callback: (msg: DeliveredMessage | null) => void,
     options: ConsumeOptions
   ): string {
     const consumerTag = options.consumerTag || this.generateTag();
     const exclusive = options.exclusive ?? false;
     const noAck = options.noAck ?? false;
+    const priority = options.priority ?? 0;
     const queueConsumers = this.byQueue.get(queueName) ?? [];
 
     const ctx: ConsumeCtx = {
@@ -153,11 +160,27 @@ export class ConsumerRegistry {
         callback,
         noAck,
         exclusive,
+        priority,
+        onServerCancel: options.onServerCancel,
         unackedCount: 0,
       };
 
       this.byTag.set(consumerTag, entry);
-      queueConsumers.push(entry);
+
+      // SAC queues: preserve registration order (priority ignored for dispatch).
+      // Non-SAC queues: insert in priority-sorted order (descending, stable).
+      if (this.sacQueues.has(queueName)) {
+        queueConsumers.push(entry);
+      } else {
+        const insertIdx = queueConsumers.findIndex(
+          (c) => c.priority < priority
+        );
+        if (insertIdx === -1) {
+          queueConsumers.push(entry);
+        } else {
+          queueConsumers.splice(insertIdx, 0, entry);
+        }
+      }
       this.byQueue.set(queueName, queueConsumers);
 
       return { consumerTag };
@@ -270,6 +293,22 @@ export class ConsumerRegistry {
     if (entry && entry.unackedCount > 0) {
       entry.unackedCount--;
     }
+  }
+
+  /**
+   * Server-initiated cancel: remove the consumer and invoke its notification callback.
+   *
+   * Used when the server cancels a consumer (queue delete, auto-delete, queue expiry).
+   * Calls the consumer's callback with null and invokes onServerCancel.
+   *
+   * @returns The cancelled consumer entry, or undefined if not found.
+   */
+  serverCancel(consumerTag: string): ConsumerEntry | undefined {
+    const entry = this.doCancel(consumerTag);
+    if (entry) {
+      entry.onServerCancel?.();
+    }
+    return entry;
   }
 
   /** Mark a queue as using single active consumer semantics. */
