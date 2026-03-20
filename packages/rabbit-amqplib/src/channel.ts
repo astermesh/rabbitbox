@@ -45,7 +45,7 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
           routingKey: msg.routingKey,
         },
         properties: toAmqplibProperties(msg.properties),
-        content: msg.body,
+        content: toBuffer(msg.body),
       };
       this.emitReturn(adapted);
     });
@@ -354,8 +354,17 @@ function toAmqplibMessage(msg: DeliveredMessage): AmqplibMessage {
       messageCount: msg.messageCount,
     },
     properties: toAmqplibProperties(msg.properties),
-    content: msg.body,
+    content: toBuffer(msg.body),
   };
+}
+
+/**
+ * Convert a Uint8Array to a Node.js Buffer.
+ * If the input is already a Buffer, returns it as-is (no copy).
+ */
+function toBuffer(data: Uint8Array): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
 }
 
 /**

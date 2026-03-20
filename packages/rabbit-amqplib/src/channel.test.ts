@@ -185,8 +185,8 @@ describe('AmqplibChannel', () => {
 
     it('deleteQueue return type has messageCount', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
-      ch.sendToQueue('test-q', new Uint8Array([2]));
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
       const result = await ch.deleteQueue('test-q');
       expect(typeof result.messageCount).toBe('number');
       expect(result.messageCount).toBe(2);
@@ -227,8 +227,8 @@ describe('AmqplibChannel', () => {
 
     it('checkQueue reflects current message count', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
-      ch.sendToQueue('test-q', new Uint8Array([2]));
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
       const result = await ch.checkQueue('test-q');
       expect(result.messageCount).toBe(2);
     });
@@ -239,7 +239,7 @@ describe('AmqplibChannel', () => {
 
     it('purgeQueue removes all messages', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
+      ch.sendToQueue('test-q', Buffer.from('purge'));
       const result = await ch.purgeQueue('test-q');
       expect(result.messageCount).toBe(1);
     });
@@ -252,8 +252,8 @@ describe('AmqplibChannel', () => {
 
     it('purgeQueue makes queue empty', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
-      ch.sendToQueue('test-q', new Uint8Array([2]));
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
       await ch.purgeQueue('test-q');
       const check = await ch.checkQueue('test-q');
       expect(check.messageCount).toBe(0);
@@ -338,11 +338,11 @@ describe('AmqplibChannel', () => {
       await ch.assertExchange('test-ex', 'direct');
       await ch.assertQueue('test-q');
       await ch.bindQueue('test-q', 'test-ex', 'my-key');
-      ch.publish('test-ex', 'my-key', new Uint8Array([42]));
+      ch.publish('test-ex', 'my-key', Buffer.from([42]));
       const msg = await ch.get('test-q', { noAck: true });
       expect(msg).not.toBe(false);
       if (msg !== false) {
-        expect(msg.content).toEqual(new Uint8Array([42]));
+        expect(msg.content).toEqual(Buffer.from([42]));
         expect(msg.fields.exchange).toBe('test-ex');
         expect(msg.fields.routingKey).toBe('my-key');
       }
@@ -353,7 +353,7 @@ describe('AmqplibChannel', () => {
       await ch.assertQueue('test-q');
       await ch.bindQueue('test-q', 'test-ex', 'my-key');
       await ch.unbindQueue('test-q', 'test-ex', 'my-key');
-      ch.publish('test-ex', 'my-key', new Uint8Array([42]));
+      ch.publish('test-ex', 'my-key', Buffer.from([42]));
       const msg = await ch.get('test-q', { noAck: true });
       expect(msg).toBe(false);
     });
@@ -368,13 +368,30 @@ describe('AmqplibChannel', () => {
       expect(ok).toBe(true);
     });
 
+    it('publish accepts Buffer content', async () => {
+      await ch.assertQueue('test-q');
+      const ok = ch.sendToQueue('test-q', Buffer.from('hello'));
+      expect(ok).toBe(true);
+    });
+
     it('sendToQueue delivers a message', async () => {
       await ch.assertQueue('test-q');
       ch.sendToQueue('test-q', new Uint8Array([1, 2, 3]));
       const msg = await ch.get('test-q', { noAck: true });
       expect(msg).not.toBe(false);
       if (msg !== false) {
-        expect(msg.content).toEqual(new Uint8Array([1, 2, 3]));
+        expect(msg.content).toEqual(Buffer.from([1, 2, 3]));
+      }
+    });
+
+    it('sendToQueue is shorthand for publish to default exchange', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', Buffer.from('via-sendToQueue'));
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        expect(msg.fields.exchange).toBe('');
+        expect(msg.fields.routingKey).toBe('test-q');
       }
     });
 
@@ -394,10 +411,24 @@ describe('AmqplibChannel', () => {
       expect(messages).toHaveLength(1);
       const msg = messages[0];
       expect(msg).toBeDefined();
-      expect(msg?.content).toEqual(new Uint8Array([42]));
+      expect(msg?.content).toEqual(Buffer.from([42]));
       expect(msg?.fields.exchange).toBe('');
       expect(msg?.fields.routingKey).toBe('test-q');
       expect(msg?.fields.consumerTag).toBeTruthy();
+    });
+
+    it('consume with custom consumerTag', async () => {
+      await ch.assertQueue('test-q');
+      const { consumerTag } = await ch.consume(
+        'test-q',
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        () => {},
+        {
+          consumerTag: 'my-tag',
+          noAck: true,
+        }
+      );
+      expect(consumerTag).toBe('my-tag');
     });
 
     it('consume callback receives null on server cancel', async () => {
@@ -428,6 +459,42 @@ describe('AmqplibChannel', () => {
       await new Promise((r) => setTimeout(r, 50));
       expect(messages).toHaveLength(0);
     });
+
+    it('publish with options passes message properties', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', Buffer.from('test'), {
+        contentType: 'text/plain',
+        contentEncoding: 'utf-8',
+        headers: { 'x-custom': 'value' },
+        deliveryMode: 2,
+        priority: 5,
+        correlationId: 'corr-123',
+        replyTo: 'reply-q',
+        expiration: '60000',
+        messageId: 'msg-456',
+        timestamp: 1000000,
+        type: 'test.event',
+        userId: 'guest',
+        appId: 'test-app',
+      });
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        expect(msg.properties.contentType).toBe('text/plain');
+        expect(msg.properties.contentEncoding).toBe('utf-8');
+        expect(msg.properties.headers).toEqual({ 'x-custom': 'value' });
+        expect(msg.properties.deliveryMode).toBe(2);
+        expect(msg.properties.priority).toBe(5);
+        expect(msg.properties.correlationId).toBe('corr-123');
+        expect(msg.properties.replyTo).toBe('reply-q');
+        expect(msg.properties.expiration).toBe('60000');
+        expect(msg.properties.messageId).toBe('msg-456');
+        expect(msg.properties.timestamp).toBe(1000000);
+        expect(msg.properties.type).toBe('test.event');
+        expect(msg.properties.userId).toBe('guest');
+        expect(msg.properties.appId).toBe('test-app');
+      }
+    });
   });
 
   // ── Message format ────────────────────────────────────────────────
@@ -451,7 +518,7 @@ describe('AmqplibChannel', () => {
         expect(msg.properties.contentType).toBe('application/json');
         expect(msg.properties.correlationId).toBe('abc');
         expect(msg.properties.headers).toEqual({ foo: 'bar' });
-        expect(msg.content).toEqual(new Uint8Array([1]));
+        expect(msg.content).toEqual(Buffer.from([1]));
       }
     });
 
@@ -460,6 +527,100 @@ describe('AmqplibChannel', () => {
       const msg = await ch.get('test-q', { noAck: true });
       expect(msg).toBe(false);
     });
+
+    it('get returns false (not null) on empty queue', async () => {
+      await ch.assertQueue('test-q');
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).toBe(false);
+      expect(msg).not.toBe(null);
+      expect(msg).not.toBeUndefined();
+    });
+
+    it('get message fields include messageCount', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        expect(typeof msg.fields.messageCount).toBe('number');
+      }
+    });
+  });
+
+  // ── Buffer conversion ──────────────────────────────────────────────
+
+  describe('Buffer conversion', () => {
+    it('content from get is a Buffer instance', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', new Uint8Array([1, 2, 3]));
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        expect(Buffer.isBuffer(msg.content)).toBe(true);
+      }
+    });
+
+    it('content from consume is a Buffer instance', async () => {
+      await ch.assertQueue('test-q');
+      const messages: AmqplibMessage[] = [];
+      await ch.consume(
+        'test-q',
+        (msg) => {
+          if (msg) messages.push(msg);
+        },
+        { noAck: true }
+      );
+      ch.sendToQueue('test-q', new Uint8Array([10, 20]));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(messages).toHaveLength(1);
+      const msg = messages[0];
+      expect(msg).toBeDefined();
+      expect(Buffer.isBuffer(msg?.content)).toBe(true);
+    });
+
+    it('publish with Buffer, get returns Buffer with same data', async () => {
+      await ch.assertQueue('test-q');
+      const input = Buffer.from('hello world');
+      ch.sendToQueue('test-q', input);
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        expect(Buffer.isBuffer(msg.content)).toBe(true);
+        expect(msg.content.toString()).toBe('hello world');
+      }
+    });
+
+    it('publish with Uint8Array, get returns Buffer with same data', async () => {
+      await ch.assertQueue('test-q');
+      const input = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+      ch.sendToQueue('test-q', input);
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        expect(Buffer.isBuffer(msg.content)).toBe(true);
+        expect(msg.content.toString()).toBe('Hello');
+      }
+    });
+
+    it('publish with Buffer, consume receives Buffer', async () => {
+      await ch.assertQueue('test-q');
+      const messages: AmqplibMessage[] = [];
+      await ch.consume(
+        'test-q',
+        (msg) => {
+          if (msg) messages.push(msg);
+        },
+        { noAck: true }
+      );
+      ch.sendToQueue('test-q', Buffer.from('consumed'));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(messages).toHaveLength(1);
+      const msg = messages[0];
+      expect(msg).toBeDefined();
+      expect(Buffer.isBuffer(msg?.content)).toBe(true);
+      expect(msg?.content.toString()).toBe('consumed');
+    });
   });
 
   // ── Acknowledgment ────────────────────────────────────────────────
@@ -467,7 +628,7 @@ describe('AmqplibChannel', () => {
   describe('acknowledgment', () => {
     it('ack acknowledges a message', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
+      ch.sendToQueue('test-q', Buffer.from('ack-me'));
       const msg = await ch.get('test-q');
       expect(msg).not.toBe(false);
       if (msg !== false) {
@@ -475,9 +636,24 @@ describe('AmqplibChannel', () => {
       }
     });
 
+    it('ack with allUpTo=true acks multiple messages', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
+      ch.sendToQueue('test-q', Buffer.from('c'));
+      await ch.get('test-q');
+      await ch.get('test-q');
+      const msg3 = await ch.get('test-q');
+      expect(msg3).not.toBe(false);
+      if (msg3 !== false) {
+        // ack all up to and including msg3
+        expect(() => ch.ack(msg3, true)).not.toThrow();
+      }
+    });
+
     it('nack requeues a message by default', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
+      ch.sendToQueue('test-q', Buffer.from('nack-me'));
       const msg = await ch.get('test-q');
       expect(msg).not.toBe(false);
       if (msg !== false) {
@@ -490,9 +666,37 @@ describe('AmqplibChannel', () => {
       }
     });
 
+    it('nack with requeue=false discards message', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', Buffer.from('discard'));
+      const msg = await ch.get('test-q');
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        ch.nack(msg, false, false);
+        const next = await ch.get('test-q', { noAck: true });
+        expect(next).toBe(false);
+      }
+    });
+
+    it('nack with allUpTo=true requeues multiple messages', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
+      await ch.get('test-q');
+      const msg2 = await ch.get('test-q');
+      expect(msg2).not.toBe(false);
+      if (msg2 !== false) {
+        ch.nack(msg2, true, true);
+        const r1 = await ch.get('test-q', { noAck: true });
+        const r2 = await ch.get('test-q', { noAck: true });
+        expect(r1).not.toBe(false);
+        expect(r2).not.toBe(false);
+      }
+    });
+
     it('reject with requeue=false discards message', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
+      ch.sendToQueue('test-q', Buffer.from('reject-me'));
       const msg = await ch.get('test-q');
       expect(msg).not.toBe(false);
       if (msg !== false) {
@@ -502,27 +706,37 @@ describe('AmqplibChannel', () => {
       }
     });
 
+    it('reject with requeue=true requeues message', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', Buffer.from('requeue-me'));
+      const msg = await ch.get('test-q');
+      expect(msg).not.toBe(false);
+      if (msg !== false) {
+        ch.reject(msg, true);
+        const redelivered = await ch.get('test-q', { noAck: true });
+        expect(redelivered).not.toBe(false);
+        if (redelivered !== false) {
+          expect(redelivered.fields.redelivered).toBe(true);
+        }
+      }
+    });
+
     it('ackAll acknowledges all outstanding messages', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
-      ch.sendToQueue('test-q', new Uint8Array([2]));
-      // Get both messages (without noAck, so they are unacked)
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
       await ch.get('test-q');
       await ch.get('test-q');
-      // ackAll should not throw
       expect(() => ch.ackAll()).not.toThrow();
     });
 
     it('nackAll requeues all outstanding messages', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
-      ch.sendToQueue('test-q', new Uint8Array([2]));
-      // Get both messages
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
       await ch.get('test-q');
       await ch.get('test-q');
-      // nackAll with requeue=true
       ch.nackAll(true);
-      // Both messages should be requeued
       const msg1 = await ch.get('test-q', { noAck: true });
       const msg2 = await ch.get('test-q', { noAck: true });
       expect(msg1).not.toBe(false);
@@ -531,8 +745,8 @@ describe('AmqplibChannel', () => {
 
     it('nackAll with requeue=false discards all', async () => {
       await ch.assertQueue('test-q');
-      ch.sendToQueue('test-q', new Uint8Array([1]));
-      ch.sendToQueue('test-q', new Uint8Array([2]));
+      ch.sendToQueue('test-q', Buffer.from('a'));
+      ch.sendToQueue('test-q', Buffer.from('b'));
       await ch.get('test-q');
       await ch.get('test-q');
       ch.nackAll(false);
@@ -661,7 +875,7 @@ describe('AmqplibChannel', () => {
 
     it('throws on publish after close', async () => {
       await ch.close();
-      expect(() => ch.publish('ex', 'key', new Uint8Array([1]))).toThrow(
+      expect(() => ch.publish('ex', 'key', Buffer.from('x'))).toThrow(
         'Channel closed'
       );
     });
@@ -718,7 +932,7 @@ describe('ConfirmChannel', () => {
     await ch.assertQueue('confirm-q');
     const acks: number[] = [];
     ch.inner.on('ack', (e) => acks.push(e.deliveryTag));
-    ch.sendToQueue('confirm-q', new Uint8Array([1]));
+    ch.sendToQueue('confirm-q', Buffer.from('confirmed'));
     expect(acks).toHaveLength(1);
   });
 });

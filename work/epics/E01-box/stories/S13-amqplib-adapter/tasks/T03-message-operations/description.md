@@ -1,5 +1,7 @@
 # T03: Message Operations
 
+**Status:** done
+
 Implement amqplib-compatible publish, consume, and acknowledgment operations.
 
 ## Scope
