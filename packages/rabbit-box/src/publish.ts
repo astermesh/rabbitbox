@@ -56,6 +56,9 @@ export interface PublishOptions {
   /** Authenticated user for user-id validation. */
   readonly authenticatedUserId?: string;
 
+  /** Time provider for dead-letter timestamps. Defaults to Date.now(). */
+  readonly now?: () => number;
+
   /** Optional publish hook for SBI integration. */
   readonly hook?: Hook<PublishCtx, SbiPublishResult>;
 }
@@ -193,18 +196,33 @@ export function publish(opts: PublishOptions): PublishResult {
         }
       }
     } else {
-      const bindings = bindingStore.getBindings(exchangeName);
-      for (const key of allRoutingKeys) {
-        const matchedBindings = route(
-          exchange,
-          bindings,
-          key,
-          properties.headers
-        );
-        for (const binding of matchedBindings) {
-          targetQueues.add(binding.queue);
+      // Collect target queues from queue bindings and E2E bindings (with cycle detection)
+      const visitedExchanges = new Set<string>();
+      const routeThroughExchange = (exName: string, ex: typeof exchange) => {
+        if (visitedExchanges.has(exName)) return;
+        visitedExchanges.add(exName);
+
+        const bindings = bindingStore.getBindings(exName);
+        for (const key of allRoutingKeys) {
+          const matchedBindings = route(ex, bindings, key, properties.headers);
+          for (const binding of matchedBindings) {
+            targetQueues.add(binding.queue);
+          }
         }
-      }
+
+        // Exchange-to-exchange routing
+        const e2eBindings = bindingStore.getExchangeBindings(exName);
+        for (const key of allRoutingKeys) {
+          const matchedE2e = route(ex, e2eBindings, key, properties.headers);
+          for (const e2eBinding of matchedE2e) {
+            const destExchange = exchangeRegistry.getExchange(e2eBinding.queue);
+            if (destExchange) {
+              routeThroughExchange(e2eBinding.queue, destExchange);
+            }
+          }
+        }
+      };
+      routeThroughExchange(exchangeName, exchange);
     }
 
     // 6. Strip BCC header before enqueue
@@ -310,7 +328,7 @@ function deadLetterPublish(
     queueName: queue.name,
     reason: 'maxlen',
     deadLetterRoutingKey: queue.deadLetterRoutingKey,
-    now: Date.now(),
+    now: opts.now?.() ?? Date.now(),
   });
 
   // Silently drop if DLX exchange doesn't exist
