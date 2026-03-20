@@ -263,6 +263,38 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     this.deps.checkExchangeAutoDelete?.(exchange);
   }
 
+  async bindExchange(
+    destination: string,
+    source: string,
+    routingKey: string,
+    args?: Record<string, unknown>
+  ): Promise<void> {
+    this.assertOpen();
+    this.deps.bindingStore.addExchangeBinding(
+      destination,
+      source,
+      routingKey,
+      args ?? {}
+    );
+    this.deps.markExchangeHasHadBindings?.(source);
+  }
+
+  async unbindExchange(
+    destination: string,
+    source: string,
+    routingKey: string,
+    args?: Record<string, unknown>
+  ): Promise<void> {
+    this.assertOpen();
+    this.deps.bindingStore.removeExchangeBinding(
+      destination,
+      source,
+      routingKey,
+      args ?? {}
+    );
+    this.deps.checkExchangeAutoDelete?.(source);
+  }
+
   // ── Publishing ──────────────────────────────────────────────────────
 
   publish(

@@ -1551,6 +1551,183 @@ describe('E2E integration tests', () => {
     });
   });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Exchange-to-exchange bindings
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe('exchange-to-exchange bindings', () => {
+    it('basic E2E binding: source → dest → queue delivers message', async () => {
+      await setup();
+      await ch.assertExchange('source', 'direct');
+      await ch.assertExchange('dest', 'fanout');
+      await ch.assertQueue('q1');
+      await ch.bindQueue('q1', 'dest', '');
+      await ch.bindExchange('dest', 'source', 'rk');
+
+      const c = collectMessages(1);
+      await ch.consume('q1', c.callback, { noAck: true });
+
+      ch.publish('source', 'rk', new Uint8Array([1]));
+      const [msg] = await c.done;
+      expect(assertMsg(msg).body).toEqual(new Uint8Array([1]));
+      await conn.close();
+    });
+
+    it('E2E chain routing: A → B → C → queue', async () => {
+      await setup();
+      await ch.assertExchange('A', 'fanout');
+      await ch.assertExchange('B', 'fanout');
+      await ch.assertExchange('C', 'fanout');
+      await ch.assertQueue('q1');
+      await ch.bindExchange('B', 'A', '');
+      await ch.bindExchange('C', 'B', '');
+      await ch.bindQueue('q1', 'C', '');
+
+      const c = collectMessages(1);
+      await ch.consume('q1', c.callback, { noAck: true });
+
+      ch.publish('A', 'any', new Uint8Array([42]));
+      const [msg] = await c.done;
+      expect(assertMsg(msg).body).toEqual(new Uint8Array([42]));
+      await conn.close();
+    });
+
+    it('cycle detection: A ↔ B does not cause infinite loop', async () => {
+      await setup();
+      await ch.assertExchange('A', 'fanout');
+      await ch.assertExchange('B', 'fanout');
+      await ch.assertQueue('q1');
+      await ch.bindExchange('B', 'A', '');
+      await ch.bindExchange('A', 'B', '');
+      await ch.bindQueue('q1', 'B', '');
+
+      const c = collectMessages(1);
+      await ch.consume('q1', c.callback, { noAck: true });
+
+      ch.publish('A', '', new Uint8Array([1]));
+      const [msg] = await c.done;
+      expect(assertMsg(msg).body).toEqual(new Uint8Array([1]));
+      await conn.close();
+    });
+
+    it('mixed queue + E2E bindings both deliver', async () => {
+      await setup();
+      await ch.assertExchange('source', 'direct');
+      await ch.assertExchange('dest', 'direct');
+      await ch.assertQueue('q-direct');
+      await ch.assertQueue('q-via-e2e');
+      await ch.bindQueue('q-direct', 'source', 'key');
+      await ch.bindExchange('dest', 'source', 'key');
+      await ch.bindQueue('q-via-e2e', 'dest', 'key');
+
+      const c1 = collectMessages(1);
+      const c2 = collectMessages(1);
+      await ch.consume('q-direct', c1.callback, { noAck: true });
+      await ch.consume('q-via-e2e', c2.callback, { noAck: true });
+
+      ch.publish('source', 'key', new Uint8Array([1]));
+
+      const [r1] = await c1.done;
+      const [r2] = await c2.done;
+      expect(assertMsg(r1).body).toEqual(new Uint8Array([1]));
+      expect(assertMsg(r2).body).toEqual(new Uint8Array([1]));
+      await conn.close();
+    });
+
+    it('unbindExchange removes the E2E binding', async () => {
+      await setup();
+      await ch.assertExchange('source', 'fanout');
+      await ch.assertExchange('dest', 'fanout');
+      await ch.assertQueue('q1');
+      await ch.bindQueue('q1', 'dest', '');
+      await ch.bindExchange('dest', 'source', '');
+
+      // Verify it routes
+      ch.publish('source', '', new Uint8Array([1]));
+      const msg1 = await ch.get('q1', { noAck: true });
+      expect(msg1).not.toBe(false);
+
+      // Unbind and verify it no longer routes
+      await ch.unbindExchange('dest', 'source', '');
+      ch.publish('source', '', new Uint8Array([2]));
+
+      const msg2 = await ch.get('q1', { noAck: true });
+      expect(msg2).toBe(false);
+      await conn.close();
+    });
+
+    it('E2E binding with topic exchange uses source type for matching', async () => {
+      await setup();
+      await ch.assertExchange('source', 'topic');
+      await ch.assertExchange('dest', 'fanout');
+      await ch.assertQueue('q1');
+      await ch.bindExchange('dest', 'source', 'log.*');
+      await ch.bindQueue('q1', 'dest', '');
+
+      const msgs: DeliveredMessage[] = [];
+      await ch.consume('q1', (m) => msgs.push(m), { noAck: true });
+
+      // Should match
+      ch.publish('source', 'log.info', new Uint8Array([1]));
+      // Should NOT match
+      ch.publish('source', 'event.info', new Uint8Array([2]));
+      await tick(50);
+
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]?.body).toEqual(new Uint8Array([1]));
+      await conn.close();
+    });
+
+    it('E2E binding throws NOT_FOUND for non-existent source exchange', async () => {
+      await setup();
+      await ch.assertExchange('dest', 'direct');
+
+      try {
+        await ch.bindExchange('dest', 'no-such-source', 'rk');
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        expect((err as ChannelError).replyCode).toBe(404);
+      }
+      await conn.close();
+    });
+
+    it('E2E binding throws NOT_FOUND for non-existent destination exchange', async () => {
+      await setup();
+      await ch.assertExchange('source', 'direct');
+
+      try {
+        await ch.bindExchange('no-such-dest', 'source', 'rk');
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        expect((err as ChannelError).replyCode).toBe(404);
+      }
+      await conn.close();
+    });
+
+    it('deleting an exchange cleans up E2E bindings', async () => {
+      await setup();
+      await ch.assertExchange('source', 'fanout');
+      await ch.assertExchange('dest', 'fanout');
+      await ch.assertQueue('q1');
+      await ch.bindQueue('q1', 'dest', '');
+      await ch.bindExchange('dest', 'source', '');
+
+      // Delete dest exchange (cleans up its bindings)
+      await ch.deleteExchange('dest');
+
+      // Publish to source — should not route (dest is gone)
+      const returns: ReturnedMessage[] = [];
+      ch.on('return', (msg) => returns.push(msg));
+      ch.publish('source', '', new Uint8Array([1]), { mandatory: true });
+
+      expect(returns).toHaveLength(1);
+      expect(returns[0]?.replyCode).toBe(312);
+      await conn.close();
+    });
+  });
+
   // ── Queue Expiry (x-expires) ───────────────────────────────────
 
   describe('queue expiry (x-expires)', () => {

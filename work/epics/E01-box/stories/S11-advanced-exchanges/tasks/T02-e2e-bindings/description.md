@@ -1,5 +1,7 @@
 # T02: Exchange-to-Exchange Bindings
 
+**Status:** done
+
 Implement exchange-to-exchange bindings with recursive routing.
 
 ## Scope

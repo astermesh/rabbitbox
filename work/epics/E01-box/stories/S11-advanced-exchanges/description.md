@@ -1,5 +1,7 @@
 # S11: Advanced Exchange Features
 
+**Status:** done
+
 Implement alternate exchanges and exchange-to-exchange bindings.
 
 ## Scope

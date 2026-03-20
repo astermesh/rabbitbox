@@ -672,6 +672,294 @@ describe('publish', () => {
     });
   });
 
+  // ── Exchange-to-exchange (E2E) routing ─────────────────────────────
+
+  describe('exchange-to-exchange routing', () => {
+    it('routes through a basic E2E binding (source → dest → queue)', () => {
+      ctx.exchanges.declareExchange('source', 'direct');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addBinding('dest', 'q1', '', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', 'rk', {});
+
+      const result = doPublish(ctx, 'source', 'rk', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+
+    it('uses source exchange type for E2E binding matching', () => {
+      ctx.exchanges.declareExchange('source', 'direct');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addBinding('dest', 'q1', '', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', 'matching-key', {});
+
+      // Routing key does not match E2E binding key — should not route
+      const result = doPublish(ctx, 'source', 'non-matching', body('hello'));
+
+      expect(result.routed).toBe(false);
+      expect(ctx.getStore('q1').count()).toBe(0);
+    });
+
+    it('destination exchange uses its own type for queue binding matching', () => {
+      ctx.exchanges.declareExchange('source', 'fanout');
+      ctx.exchanges.declareExchange('dest', 'direct');
+      ctx.queues.declareQueue('q1', {});
+      ctx.queues.declareQueue('q2', {});
+      ctx.bindings.addBinding('dest', 'q1', 'rk', {});
+      ctx.bindings.addBinding('dest', 'q2', 'other', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+
+      const result = doPublish(ctx, 'source', 'rk', body('hello'));
+
+      expect(result.routed).toBe(true);
+      // Destination is direct — only q1 matches routing key 'rk'
+      expect(ctx.getStore('q1').count()).toBe(1);
+      expect(ctx.getStore('q2').count()).toBe(0);
+    });
+
+    it('routes through a chain of E2E bindings (A → B → C → queue)', () => {
+      ctx.exchanges.declareExchange('A', 'fanout');
+      ctx.exchanges.declareExchange('B', 'fanout');
+      ctx.exchanges.declareExchange('C', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('B', 'A', '', {});
+      ctx.bindings.addExchangeBinding('C', 'B', '', {});
+      ctx.bindings.addBinding('C', 'q1', '', {});
+
+      const result = doPublish(ctx, 'A', '', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+
+    it('collects queues from both source and destination exchanges', () => {
+      ctx.exchanges.declareExchange('source', 'fanout');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q-source', {});
+      ctx.queues.declareQueue('q-dest', {});
+      ctx.bindings.addBinding('source', 'q-source', '', {});
+      ctx.bindings.addBinding('dest', 'q-dest', '', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+
+      const result = doPublish(ctx, 'source', '', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-source').count()).toBe(1);
+      expect(ctx.getStore('q-dest').count()).toBe(1);
+    });
+
+    it('deduplicates queues across E2E and direct bindings', () => {
+      ctx.exchanges.declareExchange('source', 'fanout');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('shared-q', {});
+      ctx.bindings.addBinding('source', 'shared-q', '', {});
+      ctx.bindings.addBinding('dest', 'shared-q', '', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+
+      doPublish(ctx, 'source', '', body('hello'));
+
+      // Queue should receive only one copy despite being bound to both
+      expect(ctx.getStore('shared-q').count()).toBe(1);
+    });
+
+    it('detects simple cycle (A → B → A) and stops recursion', () => {
+      ctx.exchanges.declareExchange('A', 'fanout');
+      ctx.exchanges.declareExchange('B', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('B', 'A', '', {});
+      ctx.bindings.addExchangeBinding('A', 'B', '', {});
+      ctx.bindings.addBinding('B', 'q1', '', {});
+
+      const result = doPublish(ctx, 'A', '', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+
+    it('detects self-referencing E2E binding and stops recursion', () => {
+      ctx.exchanges.declareExchange('self', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('self', 'self', '', {});
+      ctx.bindings.addBinding('self', 'q1', '', {});
+
+      const result = doPublish(ctx, 'self', '', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+
+    it('cycle detection is per-publish — same exchange reachable in separate publishes', () => {
+      ctx.exchanges.declareExchange('A', 'fanout');
+      ctx.exchanges.declareExchange('B', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('B', 'A', '', {});
+      ctx.bindings.addBinding('B', 'q1', '', {});
+
+      doPublish(ctx, 'A', '', body('first'));
+      doPublish(ctx, 'A', '', body('second'));
+
+      expect(ctx.getStore('q1').count()).toBe(2);
+    });
+
+    it('routes with topic exchange type through E2E bindings', () => {
+      ctx.exchanges.declareExchange('source', 'topic');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', 'log.*', {});
+      ctx.bindings.addBinding('dest', 'q1', '', {});
+
+      const result = doPublish(ctx, 'source', 'log.info', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+
+    it('does not route through E2E binding when topic pattern does not match', () => {
+      ctx.exchanges.declareExchange('source', 'topic');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', 'log.*', {});
+      ctx.bindings.addBinding('dest', 'q1', '', {});
+
+      const result = doPublish(ctx, 'source', 'event.info', body('hello'));
+
+      expect(result.routed).toBe(false);
+      expect(ctx.getStore('q1').count()).toBe(0);
+    });
+
+    it('skips E2E destination exchange that was deleted', () => {
+      ctx.exchanges.declareExchange('source', 'fanout');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+      ctx.bindings.addBinding('dest', 'q1', '', {});
+
+      // Delete destination exchange — E2E binding still exists in store
+      ctx.exchanges.deleteExchange('dest');
+
+      const result = doPublish(ctx, 'source', '', body('hello'));
+
+      expect(result.routed).toBe(false);
+      expect(ctx.getStore('q1').count()).toBe(0);
+    });
+
+    it('mixed queue and E2E bindings both route correctly', () => {
+      ctx.exchanges.declareExchange('source', 'direct');
+      ctx.exchanges.declareExchange('dest', 'direct');
+      ctx.queues.declareQueue('q-direct', {});
+      ctx.queues.declareQueue('q-via-e2e', {});
+      ctx.bindings.addBinding('source', 'q-direct', 'key', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', 'key', {});
+      ctx.bindings.addBinding('dest', 'q-via-e2e', 'key', {});
+
+      const result = doPublish(ctx, 'source', 'key', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-direct').count()).toBe(1);
+      expect(ctx.getStore('q-via-e2e').count()).toBe(1);
+    });
+
+    it('emits basic.return when E2E chain resolves no queues and mandatory=true', () => {
+      ctx.exchanges.declareExchange('source', 'fanout');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      // E2E binding exists but dest has no queue bindings
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+
+      const result = doPublish(
+        ctx,
+        'source',
+        '',
+        body('hello'),
+        {},
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(false);
+      expect(ctx.onReturn).toHaveBeenCalledOnce();
+    });
+
+    it('does not emit basic.return when E2E routing succeeds and mandatory=true', () => {
+      ctx.exchanges.declareExchange('source', 'fanout');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+      ctx.bindings.addBinding('dest', 'q1', '', {});
+
+      const result = doPublish(
+        ctx,
+        'source',
+        '',
+        body('hello'),
+        {},
+        { mandatory: true }
+      );
+
+      expect(result.routed).toBe(true);
+      expect(ctx.onReturn).not.toHaveBeenCalled();
+    });
+
+    it('triggers dispatch for queues reached via E2E bindings', () => {
+      ctx.exchanges.declareExchange('source', 'fanout');
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+      ctx.bindings.addBinding('dest', 'q1', '', {});
+
+      doPublish(ctx, 'source', '', body('hello'));
+
+      expect(ctx.onDispatch).toHaveBeenCalledWith('q1');
+    });
+
+    it('E2E routing works with CC/BCC headers', () => {
+      ctx.exchanges.declareExchange('source', 'direct');
+      ctx.exchanges.declareExchange('dest', 'direct');
+      ctx.queues.declareQueue('q1', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', 'cc-key', {});
+      ctx.bindings.addBinding('dest', 'q1', 'cc-key', {});
+
+      const result = doPublish(ctx, 'source', 'no-match', body('hello'), {
+        headers: { CC: ['cc-key'] },
+      });
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+
+    it('alternate exchange triggers after E2E routing finds no queues', () => {
+      ctx.exchanges.declareExchange('source', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'fanout');
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addBinding('alt', 'q-alt', '', {});
+
+      const result = doPublish(ctx, 'source', 'no-match', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-alt').count()).toBe(1);
+    });
+
+    it('alternate exchange does not trigger when E2E routing found queues', () => {
+      ctx.exchanges.declareExchange('source', 'fanout', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('dest', 'fanout');
+      ctx.exchanges.declareExchange('alt', 'fanout');
+      ctx.queues.declareQueue('q-e2e', {});
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.bindings.addExchangeBinding('dest', 'source', '', {});
+      ctx.bindings.addBinding('dest', 'q-e2e', '', {});
+      ctx.bindings.addBinding('alt', 'q-alt', '', {});
+
+      doPublish(ctx, 'source', '', body('hello'));
+
+      expect(ctx.getStore('q-e2e').count()).toBe(1);
+      expect(ctx.getStore('q-alt').count()).toBe(0);
+    });
+  });
+
   // ── Overflow: drop-head ───────────────────────────────────────────
 
   describe('overflow: drop-head', () => {

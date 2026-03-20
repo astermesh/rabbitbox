@@ -505,6 +505,322 @@ describe('BindingStore', () => {
     });
   });
 
+  // ── addExchangeBinding ─────────────────────────────────────────────
+
+  describe('addExchangeBinding', () => {
+    it('adds an E2E binding between two exchanges', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk', {});
+
+      const bindings = store.getExchangeBindings('source');
+      expect(bindings).toHaveLength(1);
+      expect(bindings[0]).toEqual({
+        exchange: 'source',
+        queue: 'dest',
+        routingKey: 'rk',
+        arguments: {},
+      });
+    });
+
+    it('is idempotent — duplicate E2E binding is a no-op', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk', {});
+      store.addExchangeBinding('dest', 'source', 'rk', {});
+
+      expect(store.getExchangeBindings('source')).toHaveLength(1);
+    });
+
+    it('is idempotent with deep-equal arguments', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', '', {
+        'x-match': 'all',
+        level: 'info',
+      });
+      store.addExchangeBinding('dest', 'source', '', {
+        'x-match': 'all',
+        level: 'info',
+      });
+
+      expect(store.getExchangeBindings('source')).toHaveLength(1);
+    });
+
+    it('adds multiple E2E bindings with different routing keys', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk1', {});
+      store.addExchangeBinding('dest', 'source', 'rk2', {});
+
+      expect(store.getExchangeBindings('source')).toHaveLength(2);
+    });
+
+    it('adds multiple E2E bindings to different destinations', () => {
+      declareExchange('source');
+      declareExchange('dest1');
+      declareExchange('dest2');
+
+      store.addExchangeBinding('dest1', 'source', 'rk', {});
+      store.addExchangeBinding('dest2', 'source', 'rk', {});
+
+      expect(store.getExchangeBindings('source')).toHaveLength(2);
+    });
+
+    it('treats different arguments as different bindings', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', '', { 'x-match': 'all' });
+      store.addExchangeBinding('dest', 'source', '', { 'x-match': 'any' });
+
+      expect(store.getExchangeBindings('source')).toHaveLength(2);
+    });
+
+    it('stores a defensive copy of arguments', () => {
+      declareExchange('source');
+      declareExchange('dest');
+      const args = { level: 'info' };
+
+      store.addExchangeBinding('dest', 'source', '', args);
+      args.level = 'error';
+
+      const bindings = store.getExchangeBindings('source');
+      expect(bindings[0]?.arguments).toEqual({ level: 'info' });
+    });
+
+    it('throws NOT_FOUND when source exchange does not exist', () => {
+      declareExchange('dest');
+
+      expect(() =>
+        store.addExchangeBinding('dest', 'no-such-source', 'rk', {})
+      ).toThrow(ChannelError);
+      expect(() =>
+        store.addExchangeBinding('dest', 'no-such-source', 'rk', {})
+      ).toThrow(/no exchange 'no-such-source'/);
+    });
+
+    it('throws NOT_FOUND when destination exchange does not exist', () => {
+      declareExchange('source');
+
+      expect(() =>
+        store.addExchangeBinding('no-such-dest', 'source', 'rk', {})
+      ).toThrow(ChannelError);
+      expect(() =>
+        store.addExchangeBinding('no-such-dest', 'source', 'rk', {})
+      ).toThrow(/no exchange 'no-such-dest'/);
+    });
+
+    it('validates source before destination — source error takes priority', () => {
+      expect(() =>
+        store.addExchangeBinding('no-dest', 'no-source', 'rk', {})
+      ).toThrow(/no exchange 'no-source'/);
+    });
+  });
+
+  // ── removeExchangeBinding ──────────────────────────────────────────
+
+  describe('removeExchangeBinding', () => {
+    it('removes an existing E2E binding', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk', {});
+      store.removeExchangeBinding('dest', 'source', 'rk', {});
+
+      expect(store.getExchangeBindings('source')).toHaveLength(0);
+    });
+
+    it('is idempotent — removing non-existent E2E binding is a no-op', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      expect(() =>
+        store.removeExchangeBinding('dest', 'source', 'rk', {})
+      ).not.toThrow();
+    });
+
+    it('matches by deep-equal arguments on remove', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', '', {
+        'x-match': 'all',
+        level: 'info',
+      });
+      store.removeExchangeBinding('dest', 'source', '', {
+        'x-match': 'all',
+        level: 'info',
+      });
+
+      expect(store.getExchangeBindings('source')).toHaveLength(0);
+    });
+
+    it('does not remove E2E binding with different arguments', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', '', { 'x-match': 'all' });
+      store.removeExchangeBinding('dest', 'source', '', { 'x-match': 'any' });
+
+      expect(store.getExchangeBindings('source')).toHaveLength(1);
+    });
+
+    it('does not remove E2E binding with different routing key', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk1', {});
+      store.removeExchangeBinding('dest', 'source', 'rk2', {});
+
+      expect(store.getExchangeBindings('source')).toHaveLength(1);
+    });
+
+    it('removes only the matching E2E binding among multiple', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk1', {});
+      store.addExchangeBinding('dest', 'source', 'rk2', {});
+      store.removeExchangeBinding('dest', 'source', 'rk1', {});
+
+      const bindings = store.getExchangeBindings('source');
+      expect(bindings).toHaveLength(1);
+      expect(bindings[0]?.routingKey).toBe('rk2');
+    });
+
+    it('throws NOT_FOUND when source exchange does not exist', () => {
+      declareExchange('dest');
+
+      expect(() =>
+        store.removeExchangeBinding('dest', 'no-such-source', 'rk', {})
+      ).toThrow(ChannelError);
+      expect(() =>
+        store.removeExchangeBinding('dest', 'no-such-source', 'rk', {})
+      ).toThrow(/no exchange 'no-such-source'/);
+    });
+
+    it('throws NOT_FOUND when destination exchange does not exist', () => {
+      declareExchange('source');
+
+      expect(() =>
+        store.removeExchangeBinding('no-such-dest', 'source', 'rk', {})
+      ).toThrow(ChannelError);
+      expect(() =>
+        store.removeExchangeBinding('no-such-dest', 'source', 'rk', {})
+      ).toThrow(/no exchange 'no-such-dest'/);
+    });
+  });
+
+  // ── getExchangeBindings ───────────────────────────────────────────
+
+  describe('getExchangeBindings', () => {
+    it('returns empty array for exchange with no E2E bindings', () => {
+      expect(store.getExchangeBindings('source')).toEqual([]);
+    });
+
+    it('returns all E2E bindings for a source exchange', () => {
+      declareExchange('source');
+      declareExchange('dest1');
+      declareExchange('dest2');
+
+      store.addExchangeBinding('dest1', 'source', 'rk1', {});
+      store.addExchangeBinding('dest2', 'source', 'rk2', {});
+
+      expect(store.getExchangeBindings('source')).toHaveLength(2);
+    });
+
+    it('returns a defensive copy — mutations do not affect store', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk', {});
+
+      const bindings = store.getExchangeBindings('source');
+      bindings.length = 0;
+
+      expect(store.getExchangeBindings('source')).toHaveLength(1);
+    });
+
+    it('does not include queue bindings', () => {
+      declareExchange('ex');
+      declareExchange('dest');
+      declareQueue('q1');
+
+      store.addBinding('ex', 'q1', 'rk', {});
+      store.addExchangeBinding('dest', 'ex', 'rk', {});
+
+      expect(store.getExchangeBindings('ex')).toHaveLength(1);
+      expect(store.getExchangeBindings('ex')[0]?.queue).toBe('dest');
+    });
+  });
+
+  // ── removeBindingsForExchange with E2E bindings ────────────────────
+
+  describe('removeBindingsForExchange with E2E bindings', () => {
+    it('removes E2E bindings where exchange is source', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk', {});
+      store.removeBindingsForExchange('source');
+
+      expect(store.getExchangeBindings('source')).toHaveLength(0);
+    });
+
+    it('removes E2E bindings where exchange is destination', () => {
+      declareExchange('source');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'source', 'rk', {});
+      store.removeBindingsForExchange('dest');
+
+      expect(store.getExchangeBindings('source')).toHaveLength(0);
+    });
+
+    it('removes both queue and E2E bindings on exchange delete', () => {
+      declareExchange('ex');
+      declareExchange('dest');
+      declareQueue('q1');
+
+      store.addBinding('ex', 'q1', 'rk', {});
+      store.addExchangeBinding('dest', 'ex', 'rk', {});
+
+      store.removeBindingsForExchange('ex');
+
+      expect(store.getBindings('ex')).toHaveLength(0);
+      expect(store.getExchangeBindings('ex')).toHaveLength(0);
+    });
+  });
+
+  // ── bindingCount with E2E bindings ─────────────────────────────────
+
+  describe('bindingCount with E2E bindings', () => {
+    it('includes E2E bindings in count', () => {
+      declareExchange('ex');
+      declareExchange('dest');
+      declareQueue('q1');
+
+      store.addBinding('ex', 'q1', 'rk', {});
+      store.addExchangeBinding('dest', 'ex', 'rk', {});
+
+      expect(store.bindingCount('ex')).toBe(2);
+    });
+
+    it('counts only E2E bindings when no queue bindings exist', () => {
+      declareExchange('ex');
+      declareExchange('dest');
+
+      store.addExchangeBinding('dest', 'ex', 'rk', {});
+
+      expect(store.bindingCount('ex')).toBe(1);
+    });
+  });
+
   // ── Integration: ExchangeRegistry ifUnused with binding count ──────
 
   describe('integration with ExchangeRegistry ifUnused', () => {
