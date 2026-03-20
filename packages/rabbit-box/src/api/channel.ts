@@ -1,6 +1,6 @@
 import type { Channel } from '../channel.ts';
 import type { ExchangeRegistry } from '../exchange-registry.ts';
-import type { QueueRegistry } from '../queue-registry.ts';
+import { type QueueRegistry, validateMaxPriority } from '../queue-registry.ts';
 import type { BindingStore } from '../binding-store.ts';
 import type { ConsumerRegistry } from '../consumer-registry.ts';
 import type { IMessageStore } from '../message-store.ts';
@@ -155,6 +155,11 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     const expiresArg = options?.arguments?.['x-expires'];
     if (expiresArg !== undefined) {
       validateExpires(expiresArg as number);
+    }
+    // Validate x-max-priority before creating the queue
+    const maxPriorityArg = options?.arguments?.['x-max-priority'];
+    if (maxPriorityArg !== undefined) {
+      validateMaxPriority(maxPriorityArg as number);
     }
     const result = this.deps.queueRegistry.declareQueue(
       name ?? '',

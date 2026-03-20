@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { QueueRegistry } from './queue-registry.ts';
+import { QueueRegistry, validateMaxPriority } from './queue-registry.ts';
 import { ChannelError } from './errors/amqp-error.ts';
 import {
   ACCESS_REFUSED,
@@ -609,8 +609,63 @@ describe('queue object', () => {
     expect(queue.singleActiveConsumer).toBeUndefined();
   });
 
+  it('clamps x-max-priority=0 to 1', () => {
+    const reg = createRegistry();
+    reg.declareQueue('q1', {
+      arguments: { 'x-max-priority': 0 },
+    });
+    const queue = defined(reg.getQueue('q1'));
+    expect(queue.maxPriority).toBe(1);
+  });
+
+  it('preserves x-max-priority values 1-255', () => {
+    const reg = createRegistry();
+    reg.declareQueue('q1', {
+      arguments: { 'x-max-priority': 1 },
+    });
+    expect(defined(reg.getQueue('q1')).maxPriority).toBe(1);
+
+    reg.declareQueue('q2', {
+      arguments: { 'x-max-priority': 255 },
+    });
+    expect(defined(reg.getQueue('q2')).maxPriority).toBe(255);
+  });
+
   it('returns undefined for non-existent queue via getQueue', () => {
     const reg = createRegistry();
     expect(reg.getQueue('nope')).toBeUndefined();
+  });
+});
+
+describe('validateMaxPriority', () => {
+  it('accepts valid values 0-255', () => {
+    expect(() => validateMaxPriority(0)).not.toThrow();
+    expect(() => validateMaxPriority(1)).not.toThrow();
+    expect(() => validateMaxPriority(10)).not.toThrow();
+    expect(() => validateMaxPriority(255)).not.toThrow();
+  });
+
+  it('rejects negative values', () => {
+    expect(() => validateMaxPriority(-1)).toThrow(ChannelError);
+    expect(() => validateMaxPriority(-1)).toThrow(/x-max-priority/);
+  });
+
+  it('rejects values above 255', () => {
+    expect(() => validateMaxPriority(256)).toThrow(ChannelError);
+    expect(() => validateMaxPriority(256)).toThrow(/max_value_exceeded/);
+  });
+
+  it('rejects non-integer values', () => {
+    expect(() => validateMaxPriority(3.5)).toThrow(ChannelError);
+    expect(() => validateMaxPriority(NaN)).toThrow(ChannelError);
+  });
+
+  it('throws PRECONDITION_FAILED error code', () => {
+    try {
+      validateMaxPriority(-1);
+    } catch (err) {
+      expect(err).toBeInstanceOf(ChannelError);
+      expect((err as ChannelError).replyCode).toBe(PRECONDITION_FAILED);
+    }
   });
 });

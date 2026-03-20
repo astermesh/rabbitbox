@@ -94,7 +94,7 @@ function create(options?: RabbitBoxOptions): ApiConnection {
     let store = messageStores.get(queueName);
     if (!store) {
       const queue = queueRegistry.getQueue(queueName);
-      if (queue?.maxPriority !== undefined && queue.maxPriority > 0) {
+      if (queue?.maxPriority !== undefined) {
         store = new PriorityMessageStore({
           maxPriority: queue.maxPriority,
           messageTtl: queue.messageTtl,
