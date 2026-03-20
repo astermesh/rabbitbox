@@ -199,6 +199,30 @@ describe('MessageStore', () => {
       expect(result.expiresAt).toBe(10000);
     });
 
+    it('ignores invalid expiration string', () => {
+      const store = new MessageStore();
+      vi.setSystemTime(10000);
+      const msg = makeMessage({ properties: { expiration: 'not-a-number' } });
+      const result = store.enqueue(msg);
+      expect(result.expiresAt).toBeUndefined();
+    });
+
+    it('ignores empty expiration string', () => {
+      const store = new MessageStore();
+      vi.setSystemTime(10000);
+      const msg = makeMessage({ properties: { expiration: '' } });
+      const result = store.enqueue(msg);
+      expect(result.expiresAt).toBeUndefined();
+    });
+
+    it('falls back to queue TTL when per-message expiration is invalid', () => {
+      const store = new MessageStore({ messageTtl: 3000 });
+      vi.setSystemTime(10000);
+      const msg = makeMessage({ properties: { expiration: 'bad' } });
+      const result = store.enqueue(msg);
+      expect(result.expiresAt).toBe(13000);
+    });
+
     it('updates byte size on enqueue', () => {
       const store = new MessageStore();
       store.enqueue(makeMessageWithBody([1, 2, 3])); // 3 bytes

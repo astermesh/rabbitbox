@@ -115,10 +115,13 @@ export class MessageStore {
     enqueuedAt: number,
     message: BrokerMessage
   ): number | undefined {
-    const perMessageTtl =
+    const parsed =
       message.properties.expiration !== undefined
         ? parseInt(message.properties.expiration, 10)
         : undefined;
+    // Invalid expiration strings are ignored (matches RabbitMQ behavior)
+    const perMessageTtl =
+      parsed !== undefined && !Number.isNaN(parsed) ? parsed : undefined;
 
     if (perMessageTtl !== undefined && this.messageTtl !== undefined) {
       return enqueuedAt + Math.min(perMessageTtl, this.messageTtl);

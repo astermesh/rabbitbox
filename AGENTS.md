@@ -336,7 +336,9 @@ After `git checkout`, `git switch`, or `git pull` that includes changes to depen
 
 ### Code Quality
 
-After making changes to source files, always run linting, type checking, and tests.
+After making changes to source files, always run linting, type checking, formatting, and tests.
+
+**Formatting is mandatory before every commit.** Run `npm run format` before committing — unformatted code will fail CI.
 
 ### Dependency Versions
 

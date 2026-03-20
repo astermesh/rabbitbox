@@ -61,34 +61,27 @@ function create(_options?: RabbitBoxOptions): ApiConnection {
     queueName: string,
     message: BrokerMessage
   ): void => {
-    deadLetterExpired(queueName, message, {
+    deadLetterExpired(message, queueName, {
       getQueue: (name) => queueRegistry.getQueue(name),
+      exchangeExists: (name) => exchangeRegistry.hasExchange(name),
       now: () => Date.now(),
-      republish: (exchange, routingKey, dlMessage) => {
-        try {
-          publishMessage({
-            exchange,
-            routingKey,
-            body: dlMessage.body,
-            properties: dlMessage.properties,
-            mandatory: false,
-            immediate: false,
-            exchangeRegistry,
-            bindingStore,
-            queueRegistry,
-            getMessageStore,
-            onReturn: () => undefined, // dead-lettered messages are not returned
-            onDispatch: (q) => {
-              // Dispatch with a no-op channel lookup. Dead-lettered messages
-              // are enqueued and will be delivered on the next dispatch
-              // triggered by a connection with visible channels.
-              dispatcher.dispatch(q, getMessageStore(q), () => undefined);
-            },
-          });
-        } catch {
-          // If DLX exchange doesn't exist or any routing error occurs,
-          // silently drop the message (matches RabbitMQ behavior).
-        }
+      republish: (exchange, routingKey, body, properties) => {
+        publishMessage({
+          exchange,
+          routingKey,
+          body,
+          properties,
+          mandatory: false,
+          immediate: false,
+          exchangeRegistry,
+          bindingStore,
+          queueRegistry,
+          getMessageStore,
+          onReturn: () => undefined, // dead-lettered messages are not returned
+          onDispatch: (q) => {
+            dispatcher.dispatch(q, getMessageStore(q), () => undefined);
+          },
+        });
       },
     });
   };
