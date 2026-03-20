@@ -504,6 +504,118 @@ describe('MessageStore', () => {
     });
   });
 
+  // ── drainExpired ────────────────────────────────────────────────────
+
+  describe('drainExpired', () => {
+    it('returns empty array when store is empty', () => {
+      const store = new MessageStore();
+      expect(store.drainExpired(999999)).toEqual([]);
+    });
+
+    it('returns empty array when head is not expired', () => {
+      const store = new MessageStore({ messageTtl: 5000 });
+      vi.setSystemTime(10000);
+      store.enqueue(makeMessage());
+      // expiresAt = 15000, now = 12000 → not expired
+      expect(store.drainExpired(12000)).toEqual([]);
+      expect(store.count()).toBe(1);
+    });
+
+    it('removes expired messages from head', () => {
+      const store = new MessageStore({ messageTtl: 1000 });
+      vi.setSystemTime(10000);
+      store.enqueue(makeMessage({ routingKey: 'a' }));
+      vi.setSystemTime(10500);
+      store.enqueue(makeMessage({ routingKey: 'b' }));
+
+      // Both expire at 11000 and 11500; now = 12000 → both expired
+      const expired = store.drainExpired(12000);
+      expect(expired).toHaveLength(2);
+      expect(expired[0]?.routingKey).toBe('a');
+      expect(expired[1]?.routingKey).toBe('b');
+      expect(store.count()).toBe(0);
+    });
+
+    it('stops at first non-expired message', () => {
+      const store = new MessageStore();
+      vi.setSystemTime(10000);
+      store.enqueue(
+        makeMessage({
+          routingKey: 'expired',
+          properties: { expiration: '1000' },
+        })
+      );
+      vi.setSystemTime(10500);
+      store.enqueue(
+        makeMessage({
+          routingKey: 'alive',
+          properties: { expiration: '10000' },
+        })
+      );
+
+      // now = 12000: first expires at 11000 (expired), second at 20500 (alive)
+      const expired = store.drainExpired(12000);
+      expect(expired).toHaveLength(1);
+      expect(expired[0]?.routingKey).toBe('expired');
+      expect(store.count()).toBe(1);
+      expect(assertDefined(store.peek()).routingKey).toBe('alive');
+    });
+
+    it('does not drain messages without expiresAt', () => {
+      const store = new MessageStore();
+      store.enqueue(makeMessage({ routingKey: 'no-ttl' }));
+      const expired = store.drainExpired(999999);
+      expect(expired).toEqual([]);
+      expect(store.count()).toBe(1);
+    });
+
+    it('updates count and byteSize', () => {
+      const store = new MessageStore({ messageTtl: 1000 });
+      vi.setSystemTime(10000);
+      store.enqueue(makeMessageWithBody([1, 2, 3])); // 3 bytes
+      store.enqueue(makeMessageWithBody([4, 5])); // 2 bytes
+
+      expect(store.count()).toBe(2);
+      expect(store.byteSize()).toBe(5);
+
+      store.drainExpired(12000);
+      expect(store.count()).toBe(0);
+      expect(store.byteSize()).toBe(0);
+    });
+
+    it('uses strict less-than comparison (expiresAt === now is NOT expired)', () => {
+      const store = new MessageStore({ messageTtl: 0 });
+      vi.setSystemTime(10000);
+      store.enqueue(makeMessage());
+      // expiresAt = 10000, now = 10000 → NOT expired (strict <)
+      expect(store.drainExpired(10000)).toEqual([]);
+      expect(store.count()).toBe(1);
+      // now = 10001 → expired
+      const expired = store.drainExpired(10001);
+      expect(expired).toHaveLength(1);
+      expect(store.count()).toBe(0);
+    });
+
+    it('drains only head messages (per-message TTL head-only behavior)', () => {
+      const store = new MessageStore();
+      vi.setSystemTime(10000);
+      // Message A: no TTL (never expires)
+      store.enqueue(makeMessage({ routingKey: 'no-ttl' }));
+      // Message B: TTL=1000 (behind A, would be expired but A blocks)
+      store.enqueue(
+        makeMessage({
+          routingKey: 'has-ttl',
+          properties: { expiration: '1000' },
+        })
+      );
+
+      // now = 12000: B is expired but A is not and is ahead
+      const expired = store.drainExpired(12000);
+      expect(expired).toEqual([]); // A has no expiresAt → not expired → stops
+      expect(store.count()).toBe(2);
+    });
+  });
+
   // ── Edge cases ────────────────────────────────────────────────────
 
   describe('edge cases', () => {

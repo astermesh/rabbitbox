@@ -1,5 +1,7 @@
 # T01: Message TTL
 
+**Status:** done
+
 Implement per-queue and per-message TTL with expiry triggering dead-lettering.
 
 ## Scope

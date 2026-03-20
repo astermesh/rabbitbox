@@ -8,6 +8,7 @@ import { Channel } from '../channel.ts';
 import { connectionError } from '../errors/factories.ts';
 import { EventEmitter } from './event-emitter.ts';
 import { ApiChannel } from './channel.ts';
+import type { BrokerMessage } from '../types/message.ts';
 import type { ConnectionEvents } from './types.ts';
 
 const CONNECTION_CLASS = 10;
@@ -20,6 +21,10 @@ export interface BrokerState {
   readonly consumerRegistry: ConsumerRegistry;
   readonly dispatcher: Dispatcher;
   readonly messageStores: Map<string, MessageStore>;
+  /** Called when a message expires (TTL). Used for dead-lettering. */
+  readonly onExpire?: (queueName: string, message: BrokerMessage) => void;
+  /** Time provider for TTL expiry checks. */
+  readonly now?: () => number;
 }
 
 export class ApiConnection extends EventEmitter<ConnectionEvents> {
@@ -61,6 +66,14 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       },
       onDequeue: (queueName) => {
         const store = this.getMessageStore(queueName);
+        // Drain expired messages from head before dequeuing (lazy expiry)
+        const now = this.state.now?.() ?? Date.now();
+        const expired = store.drainExpired(now);
+        if (this.state.onExpire) {
+          for (const msg of expired) {
+            this.state.onExpire(queueName, msg);
+          }
+        }
         const message = store.dequeue();
         return { message, messageCount: store.count() };
       },

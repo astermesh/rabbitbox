@@ -47,6 +47,31 @@ export class MessageStore {
     return message;
   }
 
+  /**
+   * Remove and return all consecutively expired messages from the head.
+   *
+   * Stops at the first non-expired message or a message without expiresAt.
+   * Uses strict less-than: a message with expiresAt === now is NOT expired,
+   * matching RabbitMQ's TTL=0 behavior (deliver if consumer ready, expire otherwise).
+   *
+   * This implements RabbitMQ's lazy expiry at queue head — messages behind
+   * a non-expired head never expire independently (per-message TTL quirk).
+   */
+  drainExpired(now: number): BrokerMessage[] {
+    const expired: BrokerMessage[] = [];
+    while (this.messages.length > 0) {
+      const head = this.messages[0] as BrokerMessage;
+      if (head.expiresAt !== undefined && head.expiresAt < now) {
+        this.messages.shift();
+        this.totalByteSize -= head.body.byteLength;
+        expired.push(head);
+      } else {
+        break;
+      }
+    }
+    return expired;
+  }
+
   /** Read head message without removing, or null if empty. */
   peek(): BrokerMessage | null {
     return this.messages[0] ?? null;
