@@ -70,14 +70,16 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
   async deleteExchange(
     exchange: string,
     options?: { ifUnused?: boolean }
-  ): Promise<void> {
+  ): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.deleteExchange(exchange, options);
+    return {};
   }
 
-  async checkExchange(exchange: string): Promise<void> {
+  async checkExchange(exchange: string): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.checkExchange(exchange);
+    return {};
   }
 
   // ── Topology: Queues ────────────────────────────────────────────────
@@ -122,9 +124,10 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
     source: string,
     pattern: string,
     args?: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.bindQueue(queue, source, pattern, args);
+    return {};
   }
 
   async unbindQueue(
@@ -132,9 +135,10 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
     source: string,
     pattern: string,
     args?: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.unbindQueue(queue, source, pattern, args);
+    return {};
   }
 
   async bindExchange(
@@ -142,9 +146,10 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
     source: string,
     pattern: string,
     args?: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.bindExchange(destination, source, pattern, args);
+    return {};
   }
 
   async unbindExchange(
@@ -152,9 +157,10 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
     source: string,
     pattern: string,
     args?: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.unbindExchange(destination, source, pattern, args);
+    return {};
   }
 
   // ── Publishing ──────────────────────────────────────────────────────
@@ -212,9 +218,10 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
     );
   }
 
-  async cancel(consumerTag: string): Promise<void> {
+  async cancel(consumerTag: string): Promise<{ consumerTag: string }> {
     this.assertOpen();
     await this.inner.cancel(consumerTag);
+    return { consumerTag };
   }
 
   // ── Polling ─────────────────────────────────────────────────────────
@@ -236,9 +243,19 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
     this.inner.ack(fromAmqplibMessage(message), allUpTo);
   }
 
+  ackAll(): void {
+    this.assertOpen();
+    this.inner.ackAll();
+  }
+
   nack(message: AmqplibMessage, allUpTo?: boolean, requeue?: boolean): void {
     this.assertOpen();
     this.inner.nack(fromAmqplibMessage(message), allUpTo, requeue);
+  }
+
+  nackAll(requeue?: boolean): void {
+    this.assertOpen();
+    this.inner.nackAll(requeue);
   }
 
   reject(message: AmqplibMessage, requeue?: boolean): void {
@@ -248,16 +265,21 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
 
   // ── QoS ─────────────────────────────────────────────────────────────
 
-  async prefetch(count: number, global?: boolean): Promise<void> {
+  async prefetch(
+    count: number,
+    global?: boolean
+  ): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.prefetch(count, global);
+    return {};
   }
 
   // ── Recovery ────────────────────────────────────────────────────────
 
-  async recover(): Promise<void> {
+  async recover(): Promise<Record<string, never>> {
     this.assertOpen();
     await this.inner.recover();
+    return {};
   }
 
   // ── Publisher Confirms ──────────────────────────────────────────────

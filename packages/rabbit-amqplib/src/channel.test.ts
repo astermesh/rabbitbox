@@ -25,14 +25,16 @@ describe('AmqplibChannel', () => {
       expect(result).toEqual({ exchange: 'test-ex' });
     });
 
-    it('deleteExchange removes an exchange', async () => {
+    it('deleteExchange returns empty object', async () => {
       await ch.assertExchange('test-ex', 'direct');
-      await expect(ch.deleteExchange('test-ex')).resolves.toBeUndefined();
+      const result = await ch.deleteExchange('test-ex');
+      expect(result).toEqual({});
     });
 
-    it('checkExchange verifies an exchange exists', async () => {
+    it('checkExchange returns empty object', async () => {
       await ch.assertExchange('test-ex', 'direct');
-      await expect(ch.checkExchange('test-ex')).resolves.toBeUndefined();
+      const result = await ch.checkExchange('test-ex');
+      expect(result).toEqual({});
     });
   });
 
@@ -77,26 +79,34 @@ describe('AmqplibChannel', () => {
   });
 
   describe('bindings', () => {
-    it('bindQueue and unbindQueue', async () => {
+    it('bindQueue returns empty object', async () => {
       await ch.assertExchange('test-ex', 'direct');
       await ch.assertQueue('test-q');
-      await expect(
-        ch.bindQueue('test-q', 'test-ex', 'key')
-      ).resolves.toBeUndefined();
-      await expect(
-        ch.unbindQueue('test-q', 'test-ex', 'key')
-      ).resolves.toBeUndefined();
+      const result = await ch.bindQueue('test-q', 'test-ex', 'key');
+      expect(result).toEqual({});
     });
 
-    it('bindExchange and unbindExchange', async () => {
+    it('unbindQueue returns empty object', async () => {
+      await ch.assertExchange('test-ex', 'direct');
+      await ch.assertQueue('test-q');
+      await ch.bindQueue('test-q', 'test-ex', 'key');
+      const result = await ch.unbindQueue('test-q', 'test-ex', 'key');
+      expect(result).toEqual({});
+    });
+
+    it('bindExchange returns empty object', async () => {
       await ch.assertExchange('src-ex', 'direct');
       await ch.assertExchange('dst-ex', 'direct');
-      await expect(
-        ch.bindExchange('dst-ex', 'src-ex', 'key')
-      ).resolves.toBeUndefined();
-      await expect(
-        ch.unbindExchange('dst-ex', 'src-ex', 'key')
-      ).resolves.toBeUndefined();
+      const result = await ch.bindExchange('dst-ex', 'src-ex', 'key');
+      expect(result).toEqual({});
+    });
+
+    it('unbindExchange returns empty object', async () => {
+      await ch.assertExchange('src-ex', 'direct');
+      await ch.assertExchange('dst-ex', 'direct');
+      await ch.bindExchange('dst-ex', 'src-ex', 'key');
+      const result = await ch.unbindExchange('dst-ex', 'src-ex', 'key');
+      expect(result).toEqual({});
     });
   });
 
@@ -153,7 +163,7 @@ describe('AmqplibChannel', () => {
       expect(received).toContain(null);
     });
 
-    it('cancel stops consuming', async () => {
+    it('cancel stops consuming and returns consumerTag', async () => {
       await ch.assertQueue('test-q');
       const messages: AmqplibMessage[] = [];
       const { consumerTag } = await ch.consume(
@@ -163,7 +173,8 @@ describe('AmqplibChannel', () => {
         },
         { noAck: true }
       );
-      await ch.cancel(consumerTag);
+      const result = await ch.cancel(consumerTag);
+      expect(result).toEqual({ consumerTag });
       ch.sendToQueue('test-q', new Uint8Array([1]));
       await new Promise((r) => setTimeout(r, 50));
       expect(messages).toHaveLength(0);
@@ -241,25 +252,66 @@ describe('AmqplibChannel', () => {
         expect(next).toBe(false);
       }
     });
+
+    it('ackAll acknowledges all outstanding messages', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', new Uint8Array([1]));
+      ch.sendToQueue('test-q', new Uint8Array([2]));
+      // Get both messages (without noAck, so they are unacked)
+      await ch.get('test-q');
+      await ch.get('test-q');
+      // ackAll should not throw
+      expect(() => ch.ackAll()).not.toThrow();
+    });
+
+    it('nackAll requeues all outstanding messages', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', new Uint8Array([1]));
+      ch.sendToQueue('test-q', new Uint8Array([2]));
+      // Get both messages
+      await ch.get('test-q');
+      await ch.get('test-q');
+      // nackAll with requeue=true
+      ch.nackAll(true);
+      // Both messages should be requeued
+      const msg1 = await ch.get('test-q', { noAck: true });
+      const msg2 = await ch.get('test-q', { noAck: true });
+      expect(msg1).not.toBe(false);
+      expect(msg2).not.toBe(false);
+    });
+
+    it('nackAll with requeue=false discards all', async () => {
+      await ch.assertQueue('test-q');
+      ch.sendToQueue('test-q', new Uint8Array([1]));
+      ch.sendToQueue('test-q', new Uint8Array([2]));
+      await ch.get('test-q');
+      await ch.get('test-q');
+      ch.nackAll(false);
+      const msg = await ch.get('test-q', { noAck: true });
+      expect(msg).toBe(false);
+    });
   });
 
   // ── QoS ───────────────────────────────────────────────────────────
 
   describe('prefetch', () => {
-    it('sets prefetch count', async () => {
-      await expect(ch.prefetch(10)).resolves.toBeUndefined();
+    it('sets prefetch count and returns empty object', async () => {
+      const result = await ch.prefetch(10);
+      expect(result).toEqual({});
     });
 
     it('sets global prefetch', async () => {
-      await expect(ch.prefetch(5, true)).resolves.toBeUndefined();
+      const result = await ch.prefetch(5, true);
+      expect(result).toEqual({});
     });
   });
 
   // ── Recovery ──────────────────────────────────────────────────────
 
   describe('recover', () => {
-    it('recovers channel', async () => {
-      await expect(ch.recover()).resolves.toBeUndefined();
+    it('recovers channel and returns empty object', async () => {
+      const result = await ch.recover();
+      expect(result).toEqual({});
     });
   });
 
@@ -324,6 +376,16 @@ describe('AmqplibChannel', () => {
     it('throws on get after close', async () => {
       await ch.close();
       await expect(ch.get('q')).rejects.toThrow('Channel closed');
+    });
+
+    it('throws on ackAll after close', async () => {
+      await ch.close();
+      expect(() => ch.ackAll()).toThrow('Channel closed');
+    });
+
+    it('throws on nackAll after close', async () => {
+      await ch.close();
+      expect(() => ch.nackAll()).toThrow('Channel closed');
     });
   });
 });
