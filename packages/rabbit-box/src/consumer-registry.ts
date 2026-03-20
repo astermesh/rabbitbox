@@ -118,6 +118,15 @@ export class ConsumerRegistry {
         );
       }
 
+      // SAC + exclusive consumer are mutually exclusive (real RabbitMQ rejects this)
+      if (exclusive && this.sacQueues.has(queueName)) {
+        throw channelError.accessRefused(
+          `cannot set exclusive consumer on a queue with single active consumer enabled '${queueName}'`,
+          BASIC_CLASS,
+          BASIC_CONSUME
+        );
+      }
+
       // Exclusive validation
       if (exclusive && queueConsumers.length > 0) {
         throw channelError.accessRefused(

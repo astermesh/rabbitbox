@@ -310,5 +310,23 @@ describe('ConsumerRegistry', () => {
       const active = registry.getActiveConsumer('q1');
       expect(active?.consumerTag).toBe(tag2);
     });
+
+    it('rejects exclusive consumer on SAC queue', () => {
+      registry.markSingleActiveConsumer('q1');
+      try {
+        registry.register('q1', 1, callback, { exclusive: true });
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ChannelError);
+        expect((err as ChannelError).replyCode).toBe(ACCESS_REFUSED);
+      }
+    });
+
+    it('allows non-exclusive consumer on SAC queue', () => {
+      registry.markSingleActiveConsumer('q1');
+      expect(() =>
+        registry.register('q1', 1, callback, { exclusive: false })
+      ).not.toThrow();
+    });
   });
 });
