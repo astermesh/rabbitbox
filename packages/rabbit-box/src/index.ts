@@ -112,5 +112,6 @@ export type {
   GetOptions as ApiGetOptions,
   ConnectionEvents,
   ChannelEvents,
+  ConfirmEvent,
   ReturnedMessage,
 } from './api/types.ts';
