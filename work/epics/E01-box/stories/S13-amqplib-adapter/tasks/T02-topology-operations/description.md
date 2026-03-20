@@ -1,5 +1,7 @@
 # T02: Topology Operations
 
+**Status:** done
+
 Implement amqplib-compatible topology operations.
 
 ## Scope
