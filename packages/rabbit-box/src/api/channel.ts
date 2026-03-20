@@ -5,6 +5,7 @@ import type { BindingStore } from '../binding-store.ts';
 import type { ConsumerRegistry } from '../consumer-registry.ts';
 import type { MessageStore } from '../message-store.ts';
 import type { Dispatcher } from '../dispatcher.ts';
+import { type QueueExpiry, validateExpires } from '../queue-expiry.ts';
 import type { DeliveredMessage, MessageProperties } from '../types/message.ts';
 import type { ExchangeType } from '../types/exchange.ts';
 import type { AcknowledgmentDeps } from '../acknowledgment.ts';
@@ -49,6 +50,8 @@ export interface ApiChannelDeps {
   readonly getAllQueueNames: () => Iterable<string>;
   /** Authenticated username for user-id validation. */
   readonly authenticatedUserId: string;
+  /** Queue expiry manager (x-expires). */
+  readonly queueExpiry: QueueExpiry;
   /** Time provider from OBI. */
   readonly now?: () => number;
   /** SBI hooks for channel-level operations. */
@@ -148,6 +151,11 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     options?: AssertQueueOptions
   ): Promise<AssertQueueResult> {
     this.assertOpen();
+    // Validate x-expires before creating the queue
+    const expiresArg = options?.arguments?.['x-expires'];
+    if (expiresArg !== undefined) {
+      validateExpires(expiresArg as number);
+    }
     const result = this.deps.queueRegistry.declareQueue(
       name ?? '',
       options ?? {},
@@ -158,6 +166,11 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     // Register exclusive queues for auto-delete on connection close
     if (options?.exclusive) {
       this.deps.registerExclusiveQueue(result.queue);
+    }
+    // Register or reset queue expiry timer (x-expires)
+    const queue = this.deps.queueRegistry.getQueue(result.queue);
+    if (queue?.expires !== undefined) {
+      this.deps.queueExpiry.register(result.queue, queue.expires);
     }
     return result;
   }
@@ -178,8 +191,9 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     for (const consumer of [...consumers]) {
       this.deps.consumerRegistry.cancel(consumer.consumerTag);
     }
-    // Clean up message store
+    // Clean up message store and expiry timer
     this.deps.removeMessageStore(name);
+    this.deps.queueExpiry.unregister(name);
     return result;
   }
 
@@ -330,6 +344,8 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
       queue,
       this.deps.consumerRegistry.getConsumerCount(queue)
     );
+    // Reset queue expiry timer on consume activity
+    this.deps.queueExpiry.resetActivity(queue);
     // Dispatch any pending messages to the new consumer
     this.deps.dispatcher.dispatch(
       queue,
@@ -347,6 +363,10 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
         entry.queueName,
         this.deps.consumerRegistry.getConsumerCount(entry.queueName)
       );
+      // Reset expiry timer on cancel if consumers remain
+      if (this.deps.consumerRegistry.getConsumerCount(entry.queueName) > 0) {
+        this.deps.queueExpiry.resetActivity(entry.queueName);
+      }
     }
   }
 
@@ -390,6 +410,8 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     options?: GetOptions
   ): Promise<DeliveredMessage | false> {
     this.assertOpen();
+    // Reset queue expiry timer on basic.get activity
+    this.deps.queueExpiry.resetActivity(queue);
     const result = this.deps.channel.get(queue, options);
     return result ?? false;
   }
