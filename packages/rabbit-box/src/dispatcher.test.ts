@@ -579,6 +579,175 @@ describe('Dispatcher', () => {
     });
   });
 
+  // ── TTL expiry during dispatch ───────────────────────────────────
+
+  describe('TTL expiry during dispatch', () => {
+    it('skips expired messages and delivers non-expired', async () => {
+      let time = 10000;
+      const expiredMessages: { queue: string; msg: BrokerMessage }[] = [];
+      const reg = new ConsumerRegistry();
+      const disp = new Dispatcher(reg, {
+        now: () => time,
+        onExpire: (q, m) => expiredMessages.push({ queue: q, msg: m }),
+      });
+
+      const channel = new Channel(1, makeDeps());
+      const received: DeliveredMessage[] = [];
+      const store = new MessageStore({ now: () => time });
+
+      reg.register('q1', 1, (msg) => received.push(msg), { noAck: true });
+
+      // Enqueue expired message (TTL=1000, enqueued at 10000, expires at 11000)
+      store.enqueue(
+        makeMessage('expired-msg') // enqueuedAt=10000
+      );
+      // Manually create a message with expiresAt set
+      time = 10500;
+      store.enqueue(
+        makeMessage('alive-msg') // enqueuedAt=10500
+      );
+
+      // Advance time past first message's natural expiry but we need expiresAt
+      // Let's use a store with messageTtl instead
+      const store2 = new MessageStore({ messageTtl: 1000, now: () => time });
+      time = 10000;
+      store2.enqueue(makeMessage('will-expire')); // expiresAt=11000
+      time = 10500;
+      store2.enqueue(makeMessage('will-survive')); // expiresAt=11500
+
+      // Advance time: first expired, second alive
+      time = 11200;
+      disp.dispatch('q1', store2, (ch) => (ch === 1 ? channel : undefined));
+      await flushMicrotasks();
+
+      expect(expiredMessages).toHaveLength(1);
+      expect(new TextDecoder().decode(expiredMessages[0]?.msg.body)).toBe(
+        'will-expire'
+      );
+      expect(received).toHaveLength(1);
+      expect(new TextDecoder().decode(received[0]?.body)).toBe('will-survive');
+    });
+
+    it('drains expired messages even with no consumers', () => {
+      let time = 10000;
+      const expiredMessages: BrokerMessage[] = [];
+      const reg = new ConsumerRegistry();
+      const disp = new Dispatcher(reg, {
+        now: () => time,
+        onExpire: (_q, m) => expiredMessages.push(m),
+      });
+
+      const store = new MessageStore({ messageTtl: 1000, now: () => time });
+      store.enqueue(makeMessage('a'));
+      store.enqueue(makeMessage('b'));
+
+      time = 12000;
+      disp.dispatch('q1', store, () => undefined);
+
+      expect(expiredMessages).toHaveLength(2);
+      expect(store.count()).toBe(0);
+    });
+
+    it('TTL=0 message delivered when consumer is ready (same tick)', async () => {
+      const time = 10000;
+      const expiredMessages: BrokerMessage[] = [];
+      const reg = new ConsumerRegistry();
+      const disp = new Dispatcher(reg, {
+        now: () => time,
+        onExpire: (_q, m) => expiredMessages.push(m),
+      });
+
+      const channel = new Channel(1, makeDeps());
+      const received: DeliveredMessage[] = [];
+      const store = new MessageStore({ messageTtl: 0, now: () => time });
+
+      reg.register('q1', 1, (msg) => received.push(msg), { noAck: true });
+
+      // expiresAt = 10000, now() = 10000 → strict < means NOT expired
+      store.enqueue(makeMessage('ttl-zero'));
+
+      disp.dispatch('q1', store, (ch) => (ch === 1 ? channel : undefined));
+      await flushMicrotasks();
+
+      expect(expiredMessages).toHaveLength(0);
+      expect(received).toHaveLength(1);
+      expect(new TextDecoder().decode(received[0]?.body)).toBe('ttl-zero');
+    });
+
+    it('TTL=0 message expires when no consumer and time advances', () => {
+      let time = 10000;
+      const expiredMessages: BrokerMessage[] = [];
+      const reg = new ConsumerRegistry();
+      const disp = new Dispatcher(reg, {
+        now: () => time,
+        onExpire: (_q, m) => expiredMessages.push(m),
+      });
+
+      const store = new MessageStore({ messageTtl: 0, now: () => time });
+      store.enqueue(makeMessage('ttl-zero'));
+
+      // No consumers, advance time by 1ms
+      time = 10001;
+      disp.dispatch('q1', store, () => undefined);
+
+      expect(expiredMessages).toHaveLength(1);
+      expect(store.count()).toBe(0);
+    });
+
+    it('reports correct queue name in onExpire callback', () => {
+      let time = 10000;
+      const expiredQueues: string[] = [];
+      const reg = new ConsumerRegistry();
+      const disp = new Dispatcher(reg, {
+        now: () => time,
+        onExpire: (q) => expiredQueues.push(q),
+      });
+
+      const store = new MessageStore({ messageTtl: 1000, now: () => time });
+      store.enqueue(makeMessage('a'));
+
+      time = 12000;
+      disp.dispatch('my-queue', store, () => undefined);
+
+      expect(expiredQueues).toEqual(['my-queue']);
+    });
+
+    it('head-only expiry: message behind non-expired head stays', async () => {
+      let time = 10000;
+      const expiredMessages: BrokerMessage[] = [];
+      const reg = new ConsumerRegistry();
+      const disp = new Dispatcher(reg, {
+        now: () => time,
+        onExpire: (_q, m) => expiredMessages.push(m),
+      });
+
+      const channel = new Channel(1, makeDeps());
+      const received: DeliveredMessage[] = [];
+      const store = new MessageStore({ now: () => time });
+
+      reg.register('q1', 1, (msg) => received.push(msg), { noAck: true });
+
+      // Message A: no TTL (never expires)
+      store.enqueue(makeMessage('no-ttl'));
+
+      // Message B: per-message TTL=1000
+      const msgB: BrokerMessage = {
+        ...makeMessage('has-ttl'),
+        properties: { expiration: '1000' },
+      };
+      store.enqueue(msgB); // expiresAt = 11000
+
+      // Advance past B's TTL, but A is head and has no expiresAt
+      time = 12000;
+      disp.dispatch('q1', store, (ch) => (ch === 1 ? channel : undefined));
+      await flushMicrotasks();
+
+      // A is not expired → delivered. B is now head but not drained (dispatch already ran)
+      expect(expiredMessages).toHaveLength(0);
+      expect(received).toHaveLength(2); // both delivered since A blocks B's expiry
+    });
+  });
+
   // ── Edge cases ────────────────────────────────────────────────────
 
   describe('edge cases', () => {

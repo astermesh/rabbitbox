@@ -10,6 +10,7 @@ import type { ExchangeType } from '../types/exchange.ts';
 import type { AcknowledgmentDeps } from '../acknowledgment.ts';
 import { publish } from '../publish.ts';
 import { ack, nack, reject } from '../acknowledgment.ts';
+import { deadLetter } from '../dead-letter.ts';
 import { EventEmitter } from './event-emitter.ts';
 import type {
   AssertExchangeOptions,
@@ -74,6 +75,37 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
           this.deps.getMessageStore(queueName),
           this.deps.getChannel
         );
+      },
+      onDeadLetter: (queueName, message) => {
+        deadLetter(message, queueName, 'rejected', {
+          getQueue: (name) => this.deps.queueRegistry.getQueue(name),
+          exchangeExists: (name) =>
+            this.deps.exchangeRegistry.hasExchange(name),
+          now: () => Date.now(),
+          republish: (exchange, routingKey, body, properties) => {
+            publish({
+              exchange,
+              routingKey,
+              body,
+              properties,
+              mandatory: false,
+              immediate: false,
+              exchangeRegistry: this.deps.exchangeRegistry,
+              bindingStore: this.deps.bindingStore,
+              queueRegistry: this.deps.queueRegistry,
+              getMessageStore: this.deps.getMessageStore,
+              onReturn: () => undefined,
+              onDispatch: (qn) => {
+                this.deps.dispatcher.dispatch(
+                  qn,
+                  this.deps.getMessageStore(qn),
+                  this.deps.getChannel
+                );
+              },
+              authenticatedUserId: this.deps.authenticatedUserId,
+            });
+          },
+        });
       },
     };
   }
