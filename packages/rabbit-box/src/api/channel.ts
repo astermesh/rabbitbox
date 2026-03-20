@@ -3,7 +3,7 @@ import type { ExchangeRegistry } from '../exchange-registry.ts';
 import type { QueueRegistry } from '../queue-registry.ts';
 import type { BindingStore } from '../binding-store.ts';
 import type { ConsumerRegistry } from '../consumer-registry.ts';
-import type { MessageStore } from '../message-store.ts';
+import type { IMessageStore } from '../message-store.ts';
 import type { Dispatcher } from '../dispatcher.ts';
 import { type QueueExpiry, validateExpires } from '../queue-expiry.ts';
 import type { DeliveredMessage, MessageProperties } from '../types/message.ts';
@@ -38,7 +38,7 @@ export interface ApiChannelDeps {
   readonly bindingStore: BindingStore;
   readonly consumerRegistry: ConsumerRegistry;
   readonly dispatcher: Dispatcher;
-  readonly getMessageStore: (queue: string) => MessageStore;
+  readonly getMessageStore: (queue: string) => IMessageStore;
   readonly getChannel: (channelNumber: number) => Channel | undefined;
   readonly connectionId: string;
   readonly onClose: (channelNumber: number) => void;

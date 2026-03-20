@@ -31,7 +31,9 @@ export type {
   BindingStoreHooks,
 } from './binding-store.ts';
 export { MessageStore } from './message-store.ts';
-export type { MessageStoreOptions } from './message-store.ts';
+export type { IMessageStore, MessageStoreOptions } from './message-store.ts';
+export { PriorityMessageStore } from './priority-message-store.ts';
+export type { PriorityMessageStoreOptions } from './priority-message-store.ts';
 export {
   directMatch,
   fanoutMatch,
