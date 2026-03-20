@@ -223,6 +223,29 @@ export function publish(opts: PublishOptions): PublishResult {
         }
       };
       routeThroughExchange(exchangeName, exchange);
+
+      // Alternate exchange fallback: when no queues matched, try the alternate chain
+      if (targetQueues.size === 0) {
+        const alternateVisited = new Set<string>(visitedExchanges);
+        let currentExchange: typeof exchange | undefined = exchange;
+
+        while (currentExchange?.alternateExchange && targetQueues.size === 0) {
+          const altName = currentExchange.alternateExchange;
+
+          // Cycle protection
+          if (alternateVisited.has(altName)) break;
+
+          const altExchange = exchangeRegistry.getExchange(altName);
+          // If alternate exchange was deleted, behave as if not configured
+          if (!altExchange) break;
+
+          // Route through the alternate exchange (reusing E2E cycle set)
+          routeThroughExchange(altName, altExchange);
+
+          alternateVisited.add(altName);
+          currentExchange = altExchange;
+        }
+      }
     }
 
     // 6. Strip BCC header before enqueue
