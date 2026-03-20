@@ -53,7 +53,10 @@ const patterns = {
     'packages/*/src/**/*.api.test.ts',
   ],
   e2e: ['packages/*/src/**/*.e2e.test.ts'],
-  serverOnly: ['packages/*/src/**/*.io.test.ts'],
+  serverOnly: [
+    'packages/*/src/**/*.io.test.ts',
+    'packages/rabbit-amqplib/src/**/*.test.ts',
+  ],
 };
 
 const include = (p: string[]): SearchConfig => ({ include: p });
