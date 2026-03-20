@@ -23,7 +23,7 @@ export interface AmqplibReturnedMessage {
     readonly routingKey: string;
   };
   readonly properties: AmqplibMessageProperties;
-  readonly content: Uint8Array;
+  readonly content: Buffer;
 }
 
 /** A delivered message matching amqplib format. */
@@ -37,7 +37,7 @@ export interface AmqplibMessage {
     readonly messageCount?: number;
   };
   readonly properties: AmqplibMessageProperties;
-  readonly content: Uint8Array;
+  readonly content: Buffer;
 }
 
 /** Message properties matching amqplib format. */
