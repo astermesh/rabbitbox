@@ -1,5 +1,7 @@
 # T01: Auto-Delete Exchanges & Queues
 
+**Status:** done
+
 Implement automatic deletion when last consumer/binding is removed.
 
 ## Scope

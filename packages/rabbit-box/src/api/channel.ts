@@ -56,6 +56,12 @@ export interface ApiChannelDeps {
   readonly now?: () => number;
   /** SBI hooks for channel-level operations. */
   readonly hooks?: Partial<import('@rabbitbox/sbi').RabbitHooks>;
+  /** Perform auto-delete for a queue (full cleanup). */
+  readonly autoDeleteQueue?: (queueName: string) => void;
+  /** Check and perform auto-delete for an exchange after binding removal. */
+  readonly checkExchangeAutoDelete?: (exchangeName: string) => void;
+  /** Mark an exchange as having had bindings. */
+  readonly markExchangeHasHadBindings?: (exchangeName: string) => void;
 }
 
 export class ApiChannel extends EventEmitter<ChannelEvents> {
@@ -185,6 +191,10 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     options?: DeleteQueueOptions
   ): Promise<PurgeResult> {
     this.assertOpen();
+    // Collect exchanges that have bindings to this queue before removal
+    const affectedExchanges = this.deps.bindingStore
+      .getBindingsForQueue(name)
+      .map((b) => b.exchange);
     const result = this.deps.queueRegistry.deleteQueue(
       name,
       options,
@@ -199,6 +209,13 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     // Clean up message store and expiry timer
     this.deps.removeMessageStore(name);
     this.deps.queueExpiry.unregister(name);
+    // Check auto-delete for exchanges that lost bindings
+    if (this.deps.checkExchangeAutoDelete) {
+      const unique = new Set(affectedExchanges);
+      for (const exchangeName of unique) {
+        this.deps.checkExchangeAutoDelete(exchangeName);
+      }
+    }
     return result;
   }
 
@@ -227,6 +244,7 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
   ): Promise<void> {
     this.assertOpen();
     this.deps.bindingStore.addBinding(exchange, queue, routingKey, args ?? {});
+    this.deps.markExchangeHasHadBindings?.(exchange);
   }
 
   async unbindQueue(
@@ -242,6 +260,7 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
       routingKey,
       args ?? {}
     );
+    this.deps.checkExchangeAutoDelete?.(exchange);
   }
 
   // ── Publishing ──────────────────────────────────────────────────────
@@ -364,13 +383,21 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     this.assertOpen();
     const entry = this.deps.consumerRegistry.cancel(consumerTag);
     if (entry) {
-      this.deps.queueRegistry.setConsumerCount(
-        entry.queueName,
-        this.deps.consumerRegistry.getConsumerCount(entry.queueName)
+      const newCount = this.deps.consumerRegistry.getConsumerCount(
+        entry.queueName
       );
+      this.deps.queueRegistry.setConsumerCount(entry.queueName, newCount);
       // Reset expiry timer on cancel if consumers remain
-      if (this.deps.consumerRegistry.getConsumerCount(entry.queueName) > 0) {
+      if (newCount > 0) {
         this.deps.queueExpiry.resetActivity(entry.queueName);
+      }
+      // Auto-delete queue when last consumer is cancelled
+      if (
+        newCount === 0 &&
+        this.deps.autoDeleteQueue &&
+        this.deps.queueRegistry.isAutoDeleteReady(entry.queueName)
+      ) {
+        this.deps.autoDeleteQueue(entry.queueName);
       }
     }
   }
@@ -469,7 +496,22 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     if (this.closed) return;
     this.closed = true;
     // Cancel all consumers on this channel
-    this.deps.consumerRegistry.cancelByChannel(this.deps.channel.channelNumber);
+    const cancelled = this.deps.consumerRegistry.cancelByChannel(
+      this.deps.channel.channelNumber
+    );
+    // Update consumer counts and check auto-delete for affected queues
+    const affectedQueues = new Set(cancelled.map((c) => c.queueName));
+    for (const queueName of affectedQueues) {
+      const newCount = this.deps.consumerRegistry.getConsumerCount(queueName);
+      this.deps.queueRegistry.setConsumerCount(queueName, newCount);
+      if (
+        newCount === 0 &&
+        this.deps.autoDeleteQueue &&
+        this.deps.queueRegistry.isAutoDeleteReady(queueName)
+      ) {
+        this.deps.autoDeleteQueue(queueName);
+      }
+    }
     this.deps.channel.close();
     this.deps.onClose(this.deps.channel.channelNumber);
     this.emit('close');
