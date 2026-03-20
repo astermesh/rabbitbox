@@ -224,9 +224,7 @@ describe('dead-letter', () => {
     expect(xDeath).toHaveLength(1);
     expect((xDeath[0] as XDeathEntry).count).toBe(3);
     // Time should be updated
-    expect((xDeath[0] as XDeathEntry).time).toBe(
-      Math.floor(Date.now() / 1000)
-    );
+    expect((xDeath[0] as XDeathEntry).time).toBe(Math.floor(Date.now() / 1000));
   });
 
   it('adds new entry for different queue+reason combination', () => {
@@ -616,7 +614,7 @@ describe('prepareDeadLetter', () => {
   });
 
   it('sets x-first-death-* headers on first death', () => {
-    const msg = makeMessage();
+    const msg = makeMessage({ exchange: 'source-ex' });
     const result = prepareDeadLetter(msg, {
       queueName: 'q1',
       reason: 'maxlen',
@@ -626,10 +624,11 @@ describe('prepareDeadLetter', () => {
     const headers = assertDefined(result.properties.headers);
     expect(headers['x-first-death-queue']).toBe('q1');
     expect(headers['x-first-death-reason']).toBe('maxlen');
+    expect(headers['x-first-death-exchange']).toBe('source-ex');
   });
 
   it('sets x-last-death-* headers', () => {
-    const msg = makeMessage();
+    const msg = makeMessage({ exchange: 'source-ex' });
     const result = prepareDeadLetter(msg, {
       queueName: 'q1',
       reason: 'maxlen',
@@ -639,10 +638,12 @@ describe('prepareDeadLetter', () => {
     const headers = assertDefined(result.properties.headers);
     expect(headers['x-last-death-queue']).toBe('q1');
     expect(headers['x-last-death-reason']).toBe('maxlen');
+    expect(headers['x-last-death-exchange']).toBe('source-ex');
   });
 
   it('preserves x-first-death-* on subsequent deaths', () => {
     const msg = makeMessage({
+      exchange: 'current-ex',
       xDeath: [
         {
           queue: 'q1',
@@ -657,6 +658,7 @@ describe('prepareDeadLetter', () => {
         headers: {
           'x-first-death-queue': 'q1',
           'x-first-death-reason': 'expired',
+          'x-first-death-exchange': 'ex1',
         },
       },
     });
@@ -670,8 +672,10 @@ describe('prepareDeadLetter', () => {
     const headers = assertDefined(result.properties.headers);
     expect(headers['x-first-death-queue']).toBe('q1');
     expect(headers['x-first-death-reason']).toBe('expired');
+    expect(headers['x-first-death-exchange']).toBe('ex1');
     expect(headers['x-last-death-queue']).toBe('q2');
     expect(headers['x-last-death-reason']).toBe('maxlen');
+    expect(headers['x-last-death-exchange']).toBe('current-ex');
   });
 
   it('increments count for same queue+reason', () => {

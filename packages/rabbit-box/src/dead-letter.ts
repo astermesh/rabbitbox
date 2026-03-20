@@ -168,11 +168,13 @@ export function prepareDeadLetter(
     'x-death': xDeath,
     'x-last-death-queue': opts.queueName,
     'x-last-death-reason': opts.reason,
+    'x-last-death-exchange': message.exchange,
   };
 
   if (!('x-first-death-queue' in existingHeaders)) {
     headers['x-first-death-queue'] = opts.queueName;
     headers['x-first-death-reason'] = opts.reason;
+    headers['x-first-death-exchange'] = message.exchange;
   }
 
   // Remove expiration from properties (prevent re-expiry in DLX target)
