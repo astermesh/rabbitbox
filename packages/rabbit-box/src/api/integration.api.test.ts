@@ -901,4 +901,296 @@ describe('E2E integration tests', () => {
       await conn.close();
     });
   });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Dead Letter Exchange (DLX) routing
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe('dead letter exchange routing', () => {
+    it('nack with requeue=false routes message to DLX', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'direct');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', 'source-q');
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+
+      ch.sendToQueue('source-q', new TextEncoder().encode('hello'));
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb);
+      const [srcMsg] = await srcDone;
+      ch.nack(assertMsg(srcMsg), false, false);
+      await tick();
+
+      const { callback: dlxCb, done: dlxDone } = collectMessages(1);
+      await ch.consume('dlx-target', dlxCb);
+      const [dlxMsg] = await dlxDone;
+      const msg = assertMsg(dlxMsg);
+      expect(new TextDecoder().decode(msg.body)).toBe('hello');
+      await conn.close();
+    });
+
+    it('reject with requeue=false routes message to DLX', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'direct');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', 'source-q');
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+
+      ch.sendToQueue('source-q', new TextEncoder().encode('rejected'));
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb);
+      const [srcMsg] = await srcDone;
+      ch.reject(assertMsg(srcMsg), false);
+      await tick();
+
+      const { callback: dlxCb, done: dlxDone } = collectMessages(1);
+      await ch.consume('dlx-target', dlxCb);
+      const [dlxMsg] = await dlxDone;
+      const msg = assertMsg(dlxMsg);
+      expect(new TextDecoder().decode(msg.body)).toBe('rejected');
+      await conn.close();
+    });
+
+    it('dead-lettered message has x-death header with correct structure', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'fanout');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', '');
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+
+      ch.publish('', 'source-q', new TextEncoder().encode('test'), {
+        messageId: 'msg-1',
+      });
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb);
+      const [srcMsg] = await srcDone;
+      ch.nack(assertMsg(srcMsg), false, false);
+      await tick();
+
+      const { callback: dlxCb, done: dlxDone } = collectMessages(1);
+      await ch.consume('dlx-target', dlxCb);
+      const [dlxMsg] = await dlxDone;
+      const msg = assertMsg(dlxMsg);
+
+      const xDeath = msg.properties.headers?.['x-death'] as Record<
+        string,
+        unknown
+      >[];
+      expect(xDeath).toHaveLength(1);
+      const entry = xDeath[0] as Record<string, unknown>;
+      expect(entry['queue']).toBe('source-q');
+      expect(entry['reason']).toBe('rejected');
+      expect(entry['count']).toBe(1);
+      expect(entry['exchange']).toBe('');
+      expect(entry['routing-keys']).toEqual(['source-q']);
+      expect(typeof entry['time']).toBe('number');
+      expect(msg.properties.messageId).toBe('msg-1');
+      await conn.close();
+    });
+
+    it('x-death count increments on repeated dead-lettering from same queue', async () => {
+      await setup();
+      // DLX routes back to source queue (creating a cycle for testing)
+      await ch.assertExchange('dlx', 'direct');
+      await ch.assertQueue('bounce-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+      await ch.bindQueue('bounce-q', 'dlx', 'bounce-q');
+
+      ch.sendToQueue('bounce-q', new TextEncoder().encode('bounce'));
+
+      // First nack
+      const { callback: cb1, done: done1 } = collectMessages(1);
+      await ch.consume('bounce-q', cb1, { consumerTag: 'c1' });
+      const [msg1] = await done1;
+      await ch.cancel('c1');
+      ch.nack(assertMsg(msg1), false, false);
+      await tick();
+
+      // Second nack
+      const { callback: cb2, done: done2 } = collectMessages(1);
+      await ch.consume('bounce-q', cb2, { consumerTag: 'c2' });
+      const [msg2] = await done2;
+      await ch.cancel('c2');
+
+      const xDeath = assertMsg(msg2).properties.headers?.['x-death'] as Record<
+        string,
+        unknown
+      >[];
+      expect(xDeath).toHaveLength(1);
+      expect((xDeath[0] as Record<string, unknown>)['count']).toBe(1);
+
+      ch.nack(assertMsg(msg2), false, false);
+      await tick();
+
+      // Third delivery — count should be 2
+      const { callback: cb3, done: done3 } = collectMessages(1);
+      await ch.consume('bounce-q', cb3, { consumerTag: 'c3' });
+      const [msg3] = await done3;
+      await ch.cancel('c3');
+
+      const xDeath2 = assertMsg(msg3).properties.headers?.['x-death'] as Record<
+        string,
+        unknown
+      >[];
+      expect(xDeath2).toHaveLength(1);
+      expect((xDeath2[0] as Record<string, unknown>)['count']).toBe(2);
+      await conn.close();
+    });
+
+    it('uses x-dead-letter-routing-key when configured', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'direct');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', 'custom-rk');
+      await ch.assertQueue('source-q', {
+        arguments: {
+          'x-dead-letter-exchange': 'dlx',
+          'x-dead-letter-routing-key': 'custom-rk',
+        },
+      });
+
+      ch.sendToQueue('source-q', new TextEncoder().encode('routed'));
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb);
+      const [srcMsg] = await srcDone;
+      ch.nack(assertMsg(srcMsg), false, false);
+      await tick();
+
+      const { callback: dlxCb, done: dlxDone } = collectMessages(1);
+      await ch.consume('dlx-target', dlxCb);
+      const [dlxMsg] = await dlxDone;
+      expect(assertMsg(dlxMsg)).toBeDefined();
+      await conn.close();
+    });
+
+    it('removes expiration property from dead-lettered message', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'fanout');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', '');
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+
+      ch.publish('', 'source-q', new TextEncoder().encode('ttl-msg'), {
+        expiration: '60000',
+      });
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb);
+      const [srcMsg] = await srcDone;
+      ch.nack(assertMsg(srcMsg), false, false);
+      await tick();
+
+      const { callback: dlxCb, done: dlxDone } = collectMessages(1);
+      await ch.consume('dlx-target', dlxCb);
+      const [dlxMsg] = await dlxDone;
+      expect(assertMsg(dlxMsg).properties.expiration).toBeUndefined();
+      await conn.close();
+    });
+
+    it('silently drops message when DLX exchange does not exist', async () => {
+      await setup();
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'nonexistent-dlx' },
+      });
+
+      ch.sendToQueue('source-q', new TextEncoder().encode('dropped'));
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb);
+      const [srcMsg] = await srcDone;
+
+      // Should not throw
+      ch.nack(assertMsg(srcMsg), false, false);
+      await conn.close();
+    });
+
+    it('sets quick-access headers (x-first-death-*, x-last-death-*)', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'fanout');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', '');
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+
+      ch.sendToQueue('source-q', new TextEncoder().encode('test'));
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb);
+      const [srcMsg] = await srcDone;
+      ch.nack(assertMsg(srcMsg), false, false);
+      await tick();
+
+      const { callback: dlxCb, done: dlxDone } = collectMessages(1);
+      await ch.consume('dlx-target', dlxCb);
+      const [dlxMsg] = await dlxDone;
+      const headers = assertMsg(dlxMsg).properties.headers;
+      expect(headers?.['x-first-death-queue']).toBe('source-q');
+      expect(headers?.['x-first-death-reason']).toBe('rejected');
+      expect(headers?.['x-last-death-queue']).toBe('source-q');
+      expect(headers?.['x-last-death-reason']).toBe('rejected');
+      await conn.close();
+    });
+
+    it('nack with requeue=true does NOT dead-letter', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'fanout');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', '');
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+
+      ch.sendToQueue('source-q', new TextEncoder().encode('requeued'));
+
+      const { callback: srcCb, done: srcDone } = collectMessages(1);
+      await ch.consume('source-q', srcCb, { consumerTag: 'c1' });
+      const [srcMsg] = await srcDone;
+      await ch.cancel('c1');
+      ch.nack(assertMsg(srcMsg), false, true);
+      await tick();
+
+      // Message should be requeued back to source-q, not sent to DLX
+      const { callback: srcCb2, done: srcDone2 } = collectMessages(1);
+      await ch.consume('source-q', srcCb2, { consumerTag: 'c2' });
+      const [redelivered] = await srcDone2;
+      expect(assertMsg(redelivered).redelivered).toBe(true);
+      expect(
+        assertMsg(redelivered).properties.headers?.['x-death']
+      ).toBeUndefined();
+      await conn.close();
+    });
+
+    it('message without DLX configured is discarded on nack requeue=false', async () => {
+      await setup();
+      await ch.assertQueue('no-dlx-q');
+
+      ch.sendToQueue('no-dlx-q', new TextEncoder().encode('gone'));
+
+      const { callback, done } = collectMessages(1);
+      await ch.consume('no-dlx-q', callback, { consumerTag: 'c1' });
+      const [msg] = await done;
+      await ch.cancel('c1');
+      ch.nack(assertMsg(msg), false, false);
+      await tick();
+
+      // Queue should be empty
+      const result = await ch.get('no-dlx-q');
+      expect(result).toBe(false);
+      await conn.close();
+    });
+  });
 });

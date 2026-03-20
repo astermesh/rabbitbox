@@ -1,0 +1,112 @@
+import type { BrokerMessage, MessageProperties } from './types/message.ts';
+import type { Queue } from './types/queue.ts';
+import type { XDeathEntry, XDeathReason } from './types/x-death-entry.ts';
+
+/**
+ * Dependencies injected into the dead-letter module.
+ */
+export interface DeadLetterDeps {
+  /** Look up a queue by name. */
+  readonly getQueue: (name: string) => Queue | undefined;
+  /** Check whether an exchange exists in the registry. */
+  readonly exchangeExists: (name: string) => boolean;
+  /** Re-publish the dead-lettered message through the normal routing pipeline. */
+  readonly republish: (
+    exchange: string,
+    routingKey: string,
+    body: Uint8Array,
+    properties: MessageProperties
+  ) => void;
+}
+
+/**
+ * Dead-letter a message from a queue.
+ *
+ * Implements RabbitMQ dead letter exchange (DLX) semantics:
+ * 1. Check queue has x-dead-letter-exchange configured
+ * 2. Check DLX exchange exists (silently drop if not)
+ * 3. Build/update x-death header entry (increment count for same queue+reason)
+ * 4. Set quick-access headers (x-first-death-*, x-last-death-*)
+ * 5. Remove expiration property (prevent re-expiry in target queue)
+ * 6. Re-publish to DLX exchange through normal routing pipeline
+ */
+export function deadLetter(
+  message: BrokerMessage,
+  queueName: string,
+  reason: XDeathReason,
+  deps: DeadLetterDeps
+): void {
+  const queue = deps.getQueue(queueName);
+  if (!queue || queue.deadLetterExchange === undefined) return;
+
+  const dlxExchange = queue.deadLetterExchange;
+  if (!deps.exchangeExists(dlxExchange)) return;
+
+  const dlRoutingKey = queue.deadLetterRoutingKey ?? message.routingKey;
+
+  // Read existing x-death array from message headers
+  const existingXDeath = readXDeath(message.properties.headers);
+  const now = Math.floor(Date.now() / 1000);
+
+  // Find existing entry with same queue+reason
+  const existingIdx = existingXDeath.findIndex(
+    (e) => e.queue === queueName && e.reason === reason
+  );
+
+  let newEntry: XDeathEntry;
+  if (existingIdx >= 0) {
+    const old = existingXDeath[existingIdx] as XDeathEntry;
+    newEntry = { ...old, count: old.count + 1, time: now };
+    existingXDeath.splice(existingIdx, 1);
+  } else {
+    newEntry = {
+      queue: queueName,
+      reason,
+      count: 1,
+      exchange: message.exchange,
+      'routing-keys': [message.routingKey],
+      time: now,
+    };
+    if (reason === 'expired' && message.properties.expiration) {
+      newEntry = {
+        ...newEntry,
+        'original-expiration': message.properties.expiration,
+      };
+    }
+  }
+
+  const xDeath: XDeathEntry[] = [newEntry, ...existingXDeath];
+
+  // Build updated headers
+  const headers: Record<string, unknown> = {
+    ...message.properties.headers,
+    'x-death': xDeath,
+  };
+
+  // Quick-access headers: x-first-death-* only on first death
+  if (!headers['x-first-death-queue']) {
+    headers['x-first-death-queue'] = queueName;
+    headers['x-first-death-reason'] = reason;
+  }
+  headers['x-last-death-queue'] = queueName;
+  headers['x-last-death-reason'] = reason;
+
+  // Remove expiration property, keep everything else
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { expiration: _removed, ...restProps } = message.properties;
+  const properties: MessageProperties = { ...restProps, headers };
+
+  deps.republish(dlxExchange, dlRoutingKey, message.body, properties);
+}
+
+/**
+ * Read x-death array from message headers, returning a mutable copy.
+ */
+function readXDeath(
+  headers: Record<string, unknown> | undefined
+): XDeathEntry[] {
+  if (!headers) return [];
+  const raw = headers['x-death'];
+  if (!Array.isArray(raw)) return [];
+  return [...raw] as XDeathEntry[];
+}
