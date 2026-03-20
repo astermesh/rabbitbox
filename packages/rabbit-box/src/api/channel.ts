@@ -74,6 +74,7 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
           getQueue: (name) => this.deps.queueRegistry.getQueue(name),
           exchangeExists: (name) =>
             this.deps.exchangeRegistry.hasExchange(name),
+          now: () => Date.now(),
           republish: (exchange, routingKey, body, properties) => {
             publish({
               exchange,

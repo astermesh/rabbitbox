@@ -1176,6 +1176,87 @@ describe('E2E integration tests', () => {
       await conn.close();
     });
 
+    it('per-queue TTL (x-message-ttl) causes message expiry and dead-lettering', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'fanout');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', '');
+      await ch.assertQueue('ttl-q', {
+        arguments: {
+          'x-message-ttl': 1,
+          'x-dead-letter-exchange': 'dlx',
+        },
+      });
+
+      ch.sendToQueue('ttl-q', new TextEncoder().encode('expires'));
+      // Wait for TTL to pass, then trigger drainExpired on ttl-q via get
+      await tick(50);
+      await ch.get('ttl-q');
+      await tick();
+
+      // Message should now be in dlx-target; use get to retrieve it
+      const dlxMsg = await ch.get('dlx-target');
+      expect(dlxMsg).not.toBe(false);
+      if (dlxMsg === false) return;
+      expect(new TextDecoder().decode(dlxMsg.body)).toBe('expires');
+      const xDeath = dlxMsg.properties.headers?.['x-death'] as Record<
+        string,
+        unknown
+      >[];
+      expect(xDeath).toHaveLength(1);
+      expect((xDeath[0] as Record<string, unknown>)['reason']).toBe('expired');
+      expect((xDeath[0] as Record<string, unknown>)['queue']).toBe('ttl-q');
+      await conn.close();
+    });
+
+    it('per-message TTL (expiration property) causes expiry and dead-lettering', async () => {
+      await setup();
+      await ch.assertExchange('dlx', 'fanout');
+      await ch.assertQueue('dlx-target');
+      await ch.bindQueue('dlx-target', 'dlx', '');
+      await ch.assertQueue('source-q', {
+        arguments: { 'x-dead-letter-exchange': 'dlx' },
+      });
+
+      ch.publish('', 'source-q', new TextEncoder().encode('msg-ttl'), {
+        expiration: '1',
+      });
+      await tick(50);
+      await ch.get('source-q'); // triggers drainExpired
+      await tick();
+
+      const dlxMsg = await ch.get('dlx-target');
+      expect(dlxMsg).not.toBe(false);
+      if (dlxMsg === false) return;
+      expect(new TextDecoder().decode(dlxMsg.body)).toBe('msg-ttl');
+      // expiration should be stripped from dead-lettered message
+      expect(dlxMsg.properties.expiration).toBeUndefined();
+      // original-expiration should be in x-death
+      const xDeath = dlxMsg.properties.headers?.['x-death'] as Record<
+        string,
+        unknown
+      >[];
+      expect(
+        (xDeath[0] as Record<string, unknown>)['original-expiration']
+      ).toBe('1');
+      await conn.close();
+    });
+
+    it('expired message without DLX is silently discarded', async () => {
+      await setup();
+      await ch.assertQueue('ttl-no-dlx', {
+        arguments: { 'x-message-ttl': 1 },
+      });
+
+      ch.sendToQueue('ttl-no-dlx', new TextEncoder().encode('gone'));
+      await tick(50);
+
+      // get triggers drainExpired; message should have expired and been discarded
+      const result = await ch.get('ttl-no-dlx');
+      expect(result).toBe(false);
+      await conn.close();
+    });
+
     it('message without DLX configured is discarded on nack requeue=false', async () => {
       await setup();
       await ch.assertQueue('no-dlx-q');

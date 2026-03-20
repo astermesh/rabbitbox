@@ -8,11 +8,16 @@ import type { DeliveredMessage, BrokerMessage } from './types/message.ts';
  *
  * Delivers messages from a queue's message store to registered consumers,
  * rotating fairly across consumers and respecting both per-consumer and
- * per-channel prefetch limits.
+ * per-channel prefetch limits. Handles lazy TTL expiry at queue head
+ * before delivery.
  */
 export interface DispatcherOptions {
   /** Async delivery scheduler. Defaults to queueMicrotask(). */
   readonly schedule?: (callback: () => void) => void;
+  /** Time provider for TTL expiry checks. Defaults to Date.now(). */
+  readonly now?: () => number;
+  /** Called for each message that expires at queue head during dispatch. */
+  readonly onExpire?: (queueName: string, message: BrokerMessage) => void;
 }
 
 export class Dispatcher {
@@ -20,10 +25,16 @@ export class Dispatcher {
   /** Per-queue round-robin index. */
   private readonly rrIndex = new Map<string, number>();
   private readonly schedule: (callback: () => void) => void;
+  private readonly now: () => number;
+  private readonly onExpire:
+    | ((queueName: string, message: BrokerMessage) => void)
+    | undefined;
 
   constructor(registry: ConsumerRegistry, options?: DispatcherOptions) {
     this.registry = registry;
     this.schedule = options?.schedule ?? ((cb) => queueMicrotask(cb));
+    this.now = options?.now ?? (() => Date.now());
+    this.onExpire = options?.onExpire;
   }
 
   /**
@@ -43,6 +54,16 @@ export class Dispatcher {
     store: MessageStore,
     getChannel: (channelNumber: number) => Channel | undefined
   ): void {
+    // Drain expired messages from queue head (lazy expiry).
+    // Must happen before consumer check: expired messages are removed
+    // even when no consumers are registered.
+    const expired = store.drainExpired(this.now());
+    if (this.onExpire) {
+      for (const message of expired) {
+        this.onExpire(queueName, message);
+      }
+    }
+
     const consumers = this.registry.getConsumersForQueue(queueName);
     if (consumers.length === 0) return;
 

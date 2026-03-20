@@ -17,6 +17,21 @@ export interface DeadLetterDeps {
     body: Uint8Array,
     properties: MessageProperties
   ) => void;
+  /** Time provider for x-death timestamps (returns milliseconds since epoch). */
+  readonly now: () => number;
+}
+
+/**
+ * Dead-letter a message due to TTL expiry.
+ *
+ * Convenience wrapper around deadLetter() with reason "expired".
+ */
+export function deadLetterExpired(
+  message: BrokerMessage,
+  queueName: string,
+  deps: DeadLetterDeps
+): void {
+  deadLetter(message, queueName, 'expired', deps);
 }
 
 /**
@@ -46,7 +61,7 @@ export function deadLetter(
 
   // Read existing x-death array from message headers
   const existingXDeath = readXDeath(message.properties.headers);
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor(deps.now() / 1000);
 
   // Find existing entry with same queue+reason
   const existingIdx = existingXDeath.findIndex(

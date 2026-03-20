@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { deadLetter } from './dead-letter.ts';
+import { deadLetter, deadLetterExpired } from './dead-letter.ts';
 import type { DeadLetterDeps } from './dead-letter.ts';
 import type { BrokerMessage, MessageProperties } from './types/message.ts';
 import type { Queue } from './types/queue.ts';
@@ -49,6 +49,7 @@ describe('dead-letter', () => {
       getQueue: (name: string) => (name === queue.name ? queue : undefined),
       exchangeExists: () => true,
       republish,
+      now: () => Date.now(),
     };
   });
 
@@ -494,5 +495,70 @@ describe('dead-letter', () => {
 
     expect(republish).toHaveBeenCalledTimes(1);
     // The dead-letter module publishes to the DLX - routing is handled by the caller
+  });
+});
+
+describe('deadLetterExpired', () => {
+  let republish: ReturnType<typeof vi.fn<DeadLetterDeps['republish']>>;
+  let deps: DeadLetterDeps;
+  let queue: Queue;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+
+    queue = makeQueue();
+    republish = vi.fn<DeadLetterDeps['republish']>();
+    deps = {
+      getQueue: (name: string) => (name === queue.name ? queue : undefined),
+      exchangeExists: () => true,
+      republish,
+      now: () => Date.now(),
+    };
+  });
+
+  it('dead-letters with reason "expired"', () => {
+    const msg = makeMessage();
+
+    deadLetterExpired(msg, 'source-q', deps);
+
+    expect(republish).toHaveBeenCalledTimes(1);
+    const [, , , props] = republish.mock.calls[0] as RepublishArgs;
+    const xDeath = props.headers?.['x-death'] as XDeathEntry[];
+    expect((xDeath[0] as XDeathEntry).reason).toBe('expired');
+  });
+
+  it('stores original-expiration when message had expiration property', () => {
+    const msg = makeMessage({ properties: { expiration: '5000' } });
+
+    deadLetterExpired(msg, 'source-q', deps);
+
+    const [, , , props] = republish.mock.calls[0] as RepublishArgs;
+    const xDeath = props.headers?.['x-death'] as XDeathEntry[];
+    expect((xDeath[0] as XDeathEntry)['original-expiration']).toBe('5000');
+  });
+
+  it('strips expiration from republished message properties', () => {
+    const msg = makeMessage({
+      properties: { expiration: '5000', contentType: 'text/plain' },
+    });
+
+    deadLetterExpired(msg, 'source-q', deps);
+
+    const [, , , props] = republish.mock.calls[0] as RepublishArgs;
+    expect(props.expiration).toBeUndefined();
+    expect(props.contentType).toBe('text/plain');
+  });
+
+  it('discards message when queue has no DLX configured', () => {
+    queue = makeQueue({ deadLetterExchange: undefined });
+    deps = {
+      ...deps,
+      getQueue: (name) => (name === queue.name ? queue : undefined),
+    };
+
+    deadLetterExpired(makeMessage(), 'source-q', deps);
+
+    expect(republish).not.toHaveBeenCalled();
   });
 });
