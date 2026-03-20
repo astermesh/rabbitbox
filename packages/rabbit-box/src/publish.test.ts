@@ -671,4 +671,248 @@ describe('publish', () => {
       expect(result.routed).toBe(false);
     });
   });
+
+  // ── Overflow: drop-head ───────────────────────────────────────────
+
+  describe('overflow: drop-head', () => {
+    it('drops oldest message when exceeding maxLength', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: { 'x-max-length': 2 },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      doPublish(ctx, '', 'q1', body('second'));
+      doPublish(ctx, '', 'q1', body('third'));
+
+      const store = ctx.getStore('q1');
+      expect(store.count()).toBe(2);
+      const msg1 = assertDefined(store.dequeue());
+      const msg2 = assertDefined(store.dequeue());
+      expect(new TextDecoder().decode(msg1.body)).toBe('second');
+      expect(new TextDecoder().decode(msg2.body)).toBe('third');
+    });
+
+    it('dead-letters dropped head message to DLX', () => {
+      ctx.exchanges.declareExchange('dlx', 'direct');
+      ctx.queues.declareQueue('dlq', {});
+      ctx.bindings.addBinding('dlx', 'dlq', 'q1', {});
+
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 1,
+          'x-dead-letter-exchange': 'dlx',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      doPublish(ctx, '', 'q1', body('second'));
+
+      // q1 should have only 'second'
+      expect(ctx.getStore('q1').count()).toBe(1);
+      expect(
+        new TextDecoder().decode(assertDefined(ctx.getStore('q1').peek()).body)
+      ).toBe('second');
+
+      // dlq should have 'first' (dead-lettered)
+      const dlqStore = ctx.getStore('dlq');
+      expect(dlqStore.count()).toBe(1);
+      const dlMsg = assertDefined(dlqStore.dequeue());
+      expect(new TextDecoder().decode(dlMsg.body)).toBe('first');
+
+      // Should have x-death header with reason 'maxlen'
+      const xDeath = dlMsg.properties.headers?.['x-death'] as {
+        reason: string;
+        queue: string;
+      }[];
+      expect(xDeath).toBeDefined();
+      const entry = assertDefined(xDeath[0]);
+      expect(entry.reason).toBe('maxlen');
+      expect(entry.queue).toBe('q1');
+    });
+
+    it('discards dropped messages when no DLX configured', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: { 'x-max-length': 1 },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      doPublish(ctx, '', 'q1', body('second'));
+
+      expect(ctx.getStore('q1').count()).toBe(1);
+      expect(
+        new TextDecoder().decode(assertDefined(ctx.getStore('q1').peek()).body)
+      ).toBe('second');
+    });
+
+    it('uses x-dead-letter-routing-key for DLX routing', () => {
+      ctx.exchanges.declareExchange('dlx', 'direct');
+      ctx.queues.declareQueue('dlq', {});
+      ctx.bindings.addBinding('dlx', 'dlq', 'custom-dl-rk', {});
+
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 1,
+          'x-dead-letter-exchange': 'dlx',
+          'x-dead-letter-routing-key': 'custom-dl-rk',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      doPublish(ctx, '', 'q1', body('second'));
+
+      const dlqStore = ctx.getStore('dlq');
+      expect(dlqStore.count()).toBe(1);
+    });
+  });
+
+  // ── Overflow: reject-publish ──────────────────────────────────────
+
+  describe('overflow: reject-publish', () => {
+    it('rejects new message when queue is at maxLength', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 2,
+          'x-overflow': 'reject-publish',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      doPublish(ctx, '', 'q1', body('second'));
+      const result = doPublish(ctx, '', 'q1', body('third'));
+
+      expect(result.routed).toBe(true);
+      expect(result.rejected).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(2);
+    });
+
+    it('does not send basic.return for rejected message', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 1,
+          'x-overflow': 'reject-publish',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      doPublish(ctx, '', 'q1', body('second'), {}, { mandatory: true });
+
+      expect(ctx.onReturn).not.toHaveBeenCalled();
+    });
+
+    it('does not trigger dispatch for rejected queue', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 1,
+          'x-overflow': 'reject-publish',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      ctx.onDispatch.mockClear();
+
+      doPublish(ctx, '', 'q1', body('second'));
+
+      expect(ctx.onDispatch).not.toHaveBeenCalled();
+    });
+
+    it('returns rejected=false when message is accepted', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 5,
+          'x-overflow': 'reject-publish',
+        },
+      });
+
+      const result = doPublish(ctx, '', 'q1', body('hello'));
+      expect(result.rejected).toBe(false);
+    });
+  });
+
+  // ── Overflow: reject-publish-dlx ──────────────────────────────────
+
+  describe('overflow: reject-publish-dlx', () => {
+    it('dead-letters the rejected incoming message', () => {
+      ctx.exchanges.declareExchange('dlx', 'direct');
+      ctx.queues.declareQueue('dlq', {});
+      ctx.bindings.addBinding('dlx', 'dlq', 'q1', {});
+
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 1,
+          'x-overflow': 'reject-publish-dlx',
+          'x-dead-letter-exchange': 'dlx',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      doPublish(ctx, '', 'q1', body('second'));
+
+      // q1 should still have only 'first'
+      expect(ctx.getStore('q1').count()).toBe(1);
+      expect(
+        new TextDecoder().decode(assertDefined(ctx.getStore('q1').peek()).body)
+      ).toBe('first');
+
+      // dlq should have 'second' (dead-lettered rejected message)
+      const dlqStore = ctx.getStore('dlq');
+      expect(dlqStore.count()).toBe(1);
+      const dlMsg = assertDefined(dlqStore.dequeue());
+      expect(new TextDecoder().decode(dlMsg.body)).toBe('second');
+
+      const xDeath = dlMsg.properties.headers?.['x-death'] as {
+        reason: string;
+      }[];
+      expect(assertDefined(xDeath[0]).reason).toBe('maxlen');
+    });
+
+    it('silently drops when DLX exchange does not exist', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length': 1,
+          'x-overflow': 'reject-publish-dlx',
+          'x-dead-letter-exchange': 'nonexistent-dlx',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', body('first'));
+      const result = doPublish(ctx, '', 'q1', body('second'));
+
+      expect(result.rejected).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+  });
+
+  // ── Overflow: maxLengthBytes ──────────────────────────────────────
+
+  describe('overflow: maxLengthBytes', () => {
+    it('enforces byte limit with drop-head', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: { 'x-max-length-bytes': 10 },
+      });
+
+      doPublish(ctx, '', 'q1', new Uint8Array(5));
+      doPublish(ctx, '', 'q1', new Uint8Array(5));
+      // At limit (10 bytes)
+      doPublish(ctx, '', 'q1', new Uint8Array(3));
+      // 13 > 10, drop from head until <= 10
+
+      const store = ctx.getStore('q1');
+      expect(store.byteSize()).toBeLessThanOrEqual(10);
+    });
+
+    it('enforces byte limit with reject-publish', () => {
+      ctx.queues.declareQueue('q1', {
+        arguments: {
+          'x-max-length-bytes': 10,
+          'x-overflow': 'reject-publish',
+        },
+      });
+
+      doPublish(ctx, '', 'q1', new Uint8Array(10));
+      const result = doPublish(ctx, '', 'q1', new Uint8Array(1));
+
+      expect(result.rejected).toBe(true);
+      expect(ctx.getStore('q1').count()).toBe(1);
+    });
+  });
 });

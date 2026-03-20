@@ -127,3 +127,112 @@ function readXDeath(
   if (!Array.isArray(raw)) return [];
   return [...raw] as XDeathEntry[];
 }
+
+// ── Pure functions for overflow/publish pipeline ─────────────────────
+
+export interface DeadLetterOptions {
+  readonly queueName: string;
+  readonly reason: XDeathReason;
+  readonly deadLetterRoutingKey?: string;
+  readonly now: number;
+}
+
+/**
+ * Prepare a message for dead-lettering.
+ *
+ * Updates x-death headers, removes expiration property,
+ * and sets quick-access headers (x-first-death-*, x-last-death-*).
+ */
+export function prepareDeadLetter(
+  message: BrokerMessage,
+  opts: DeadLetterOptions
+): BrokerMessage {
+  const newEntry: XDeathEntry = {
+    queue: opts.queueName,
+    reason: opts.reason,
+    count: 1,
+    exchange: message.exchange,
+    'routing-keys': [message.routingKey],
+    time: opts.now,
+    ...(message.properties.expiration !== undefined
+      ? { 'original-expiration': message.properties.expiration }
+      : {}),
+  };
+
+  const existingXDeath = message.xDeath ?? [];
+  const xDeath = updateXDeath(existingXDeath, newEntry);
+
+  const existingHeaders = message.properties.headers ?? {};
+  const headers: Record<string, unknown> = {
+    ...existingHeaders,
+    'x-death': xDeath,
+    'x-last-death-queue': opts.queueName,
+    'x-last-death-reason': opts.reason,
+    'x-last-death-exchange': message.exchange,
+  };
+
+  if (!('x-first-death-queue' in existingHeaders)) {
+    headers['x-first-death-queue'] = opts.queueName;
+    headers['x-first-death-reason'] = opts.reason;
+    headers['x-first-death-exchange'] = message.exchange;
+  }
+
+  // Remove expiration from properties (prevent re-expiry in DLX target)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { expiration: _expiration, ...restProps } = message.properties;
+
+  return {
+    ...message,
+    routingKey: opts.deadLetterRoutingKey ?? message.routingKey,
+    properties: { ...restProps, headers } as MessageProperties,
+    xDeath,
+    mandatory: false,
+    deliveryCount: 0,
+  };
+}
+
+/**
+ * Check if dead-lettering would create a cycle.
+ *
+ * A cycle exists when the message has already been dead-lettered from
+ * the same queue and all death reasons are automatic (not 'rejected').
+ */
+export function isDeadLetterCycle(
+  message: BrokerMessage,
+  sourceQueue: string
+): boolean {
+  if (!message.xDeath || message.xDeath.length === 0) return false;
+
+  const fromSameQueue = message.xDeath.some((e) => e.queue === sourceQueue);
+  if (!fromSameQueue) return false;
+
+  return message.xDeath.every((e) => e.reason !== 'rejected');
+}
+
+function updateXDeath(
+  existing: readonly XDeathEntry[],
+  newEntry: XDeathEntry
+): XDeathEntry[] {
+  const result = [...existing];
+  const idx = result.findIndex(
+    (e) => e.queue === newEntry.queue && e.reason === newEntry.reason
+  );
+
+  if (idx >= 0) {
+    const old = result[idx] as XDeathEntry;
+    const updated: XDeathEntry = {
+      ...old,
+      count: old.count + 1,
+      time: newEntry.time,
+      ...(newEntry['original-expiration'] !== undefined
+        ? { 'original-expiration': newEntry['original-expiration'] }
+        : {}),
+    };
+    result.splice(idx, 1);
+    result.unshift(updated);
+  } else {
+    result.unshift(newEntry);
+  }
+
+  return result;
+}

@@ -43,8 +43,13 @@ export { publish } from './publish.ts';
 export type { PublishResult, PublishOptions } from './publish.ts';
 export { ack, nack, reject, ackAll, nackAll } from './acknowledgment.ts';
 export type { AcknowledgmentDeps } from './acknowledgment.ts';
-export { deadLetter, deadLetterExpired } from './dead-letter.ts';
-export type { DeadLetterDeps } from './dead-letter.ts';
+export {
+  deadLetter,
+  deadLetterExpired,
+  prepareDeadLetter,
+  isDeadLetterCycle,
+} from './dead-letter.ts';
+export type { DeadLetterDeps, DeadLetterOptions } from './dead-letter.ts';
 export { Channel } from './channel.ts';
 export type {
   ChannelState,

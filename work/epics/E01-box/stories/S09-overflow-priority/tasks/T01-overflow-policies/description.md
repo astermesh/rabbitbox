@@ -1,5 +1,7 @@
 # T01: Overflow Policies
 
+**Status:** done
+
 Implement queue size limits and overflow handling.
 
 ## Scope
