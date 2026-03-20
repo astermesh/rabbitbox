@@ -1008,4 +1008,330 @@ describe('isDeadLetterCycle', () => {
     const msg = makeMessage({ xDeath });
     expect(isDeadLetterCycle(msg, 'q1')).toBe(true);
   });
+
+  it('detects cycle with delivery_limit reason', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'delivery_limit',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(true);
+  });
+
+  it('allows cycle when rejected reason present even with delivery_limit', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'delivery_limit',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+        {
+          queue: 'q2',
+          reason: 'rejected',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 2000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(false);
+  });
+
+  // ── A↔B cycle scenarios ──────────────────────────────────────────
+
+  it('detects simple A↔B cycle with expired (message has been through both queues)', () => {
+    // Simulates: msg expired in A → routed to B → expired in B → routed back to A
+    // At this point, x-death has entries for both A and B with expired reason
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-b',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-b',
+          'routing-keys': ['rk-b'],
+          time: 2000,
+        },
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-a',
+          'routing-keys': ['rk-a'],
+          time: 1000,
+        },
+      ],
+    });
+    // Message is back in queue-a, about to be dead-lettered again
+    expect(isDeadLetterCycle(msg, 'queue-a')).toBe(true);
+  });
+
+  it('allows A↔B cycle when rejected reason is present', () => {
+    // One hop was rejected (intentional) — cycle is allowed
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-b',
+          reason: 'rejected',
+          count: 1,
+          exchange: 'ex-b',
+          'routing-keys': ['rk-b'],
+          time: 2000,
+        },
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-a',
+          'routing-keys': ['rk-a'],
+          time: 1000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'queue-a')).toBe(false);
+  });
+
+  // ── Complex multi-hop cycle ──────────────────────────────────────
+
+  it('detects complex multi-hop cycle A→B→C→A with automatic reasons', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-c',
+          reason: 'maxlen',
+          count: 1,
+          exchange: 'ex-c',
+          'routing-keys': ['rk-c'],
+          time: 3000,
+        },
+        {
+          queue: 'queue-b',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-b',
+          'routing-keys': ['rk-b'],
+          time: 2000,
+        },
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-a',
+          'routing-keys': ['rk-a'],
+          time: 1000,
+        },
+      ],
+    });
+    // Message cycled back to queue-a
+    expect(isDeadLetterCycle(msg, 'queue-a')).toBe(true);
+  });
+
+  it('allows multi-hop cycle if any hop was rejected', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-c',
+          reason: 'maxlen',
+          count: 1,
+          exchange: 'ex-c',
+          'routing-keys': ['rk-c'],
+          time: 3000,
+        },
+        {
+          queue: 'queue-b',
+          reason: 'rejected',
+          count: 1,
+          exchange: 'ex-b',
+          'routing-keys': ['rk-b'],
+          time: 2000,
+        },
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-a',
+          'routing-keys': ['rk-a'],
+          time: 1000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'queue-a')).toBe(false);
+  });
+
+  it('returns false for first visit to queue (no cycle)', () => {
+    // Message has been through other queues but not the one we're checking
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-b',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-b',
+          'routing-keys': ['rk-b'],
+          time: 2000,
+        },
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex-a',
+          'routing-keys': ['rk-a'],
+          time: 1000,
+        },
+      ],
+    });
+    // queue-c is not in x-death — no cycle
+    expect(isDeadLetterCycle(msg, 'queue-c')).toBe(false);
+  });
+
+  it('detects cycle even with high count (no numeric iteration limit)', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'expired',
+          count: 999,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(true);
+  });
+});
+
+// ── Cycle detection integration with deadLetter ─────────────────────
+
+describe('deadLetter cycle detection', () => {
+  let republish: ReturnType<typeof vi.fn<DeadLetterDeps['republish']>>;
+  let deps: DeadLetterDeps;
+  let queueA: Queue;
+  let queueB: Queue;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-15T12:00:00Z'));
+
+    queueA = makeQueue({
+      name: 'queue-a',
+      deadLetterExchange: 'dlx-a',
+    });
+    queueB = makeQueue({
+      name: 'queue-b',
+      deadLetterExchange: 'dlx-b',
+    });
+
+    republish = vi.fn<DeadLetterDeps['republish']>();
+    deps = {
+      getQueue: (name: string) => {
+        if (name === 'queue-a') return queueA;
+        if (name === 'queue-b') return queueB;
+        return undefined;
+      },
+      exchangeExists: () => true,
+      republish,
+      now: () => Date.now(),
+    };
+  });
+
+  it('drops message on expired cycle (A↔B with expired)', () => {
+    // Message has already been through queue-a with expired reason
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+
+    // Dead-letter from queue-a again with expired — cycle detected, dropped
+    deadLetter(msg, 'queue-a', 'expired', deps);
+
+    expect(republish).not.toHaveBeenCalled();
+  });
+
+  it('drops message on maxlen cycle', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-a',
+          reason: 'maxlen',
+          count: 1,
+          exchange: 'ex',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+
+    deadLetter(msg, 'queue-a', 'maxlen', deps);
+
+    expect(republish).not.toHaveBeenCalled();
+  });
+
+  it('allows rejected reason even when cycle exists (rejected bypasses detection)', () => {
+    // Message has been through queue-a before with expired
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+
+    // Dead-letter from queue-a with rejected — rejected bypasses cycle detection
+    deadLetter(msg, 'queue-a', 'rejected', deps);
+
+    expect(republish).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows dead-lettering when no cycle exists', () => {
+    const msg = makeMessage();
+
+    deadLetter(msg, 'queue-a', 'expired', deps);
+
+    expect(republish).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops message with deadLetterExpired when cycle detected', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'queue-a',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+
+    deadLetterExpired(msg, 'queue-a', deps);
+
+    expect(republish).not.toHaveBeenCalled();
+  });
 });
