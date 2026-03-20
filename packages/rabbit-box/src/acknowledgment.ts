@@ -27,6 +27,8 @@ export interface AcknowledgmentDeps {
   readonly onRequeue: (queueName: string, message: BrokerMessage) => void;
   /** Trigger consumer dispatch for a queue (after freeing prefetch capacity). */
   readonly onDispatch: (queueName: string) => void;
+  /** Dead-letter a message from a queue (called on nack/reject with requeue=false). */
+  readonly onDeadLetter?: (queueName: string, message: BrokerMessage) => void;
 }
 
 /**
@@ -85,6 +87,10 @@ function processNacked(
   if (requeue) {
     for (const entry of entries) {
       deps.onRequeue(entry.queueName, requeuedMessage(entry.message));
+    }
+  } else if (deps.onDeadLetter) {
+    for (const entry of entries) {
+      deps.onDeadLetter(entry.queueName, entry.message);
     }
   }
   dispatchQueues(entries, deps);
@@ -155,7 +161,7 @@ export function ack(
  * - `multiple=false`: nack the single delivery tag
  * - `multiple=true`: nack all tags ≤ the given tag on this channel
  * - `requeue=true`: return messages to queue head with redelivered flag
- * - `requeue=false`: discard messages (dead-letter in Phase 2)
+ * - `requeue=false`: dead-letter messages (if DLX configured) or discard
  *
  * Throws PRECONDITION_FAILED if the tag is unknown or already nacked.
  */
@@ -217,7 +223,7 @@ export function nack(
  *
  * Same as nack but for a single message only (no multiple flag).
  * - `requeue=true`: return message to queue head with redelivered flag
- * - `requeue=false`: discard message (dead-letter in Phase 2)
+ * - `requeue=false`: dead-letter message (if DLX configured) or discard
  *
  * Throws PRECONDITION_FAILED if the tag is unknown or already rejected.
  */

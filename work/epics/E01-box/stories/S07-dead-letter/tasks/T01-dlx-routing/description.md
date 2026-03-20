@@ -1,5 +1,7 @@
 # T01: DLX Routing & x-death Headers
 
+**Status:** done
+
 Implement dead letter exchange routing with proper header construction.
 
 ## Scope
