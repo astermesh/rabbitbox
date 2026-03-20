@@ -76,10 +76,10 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
     return {};
   }
 
-  async checkExchange(exchange: string): Promise<Record<string, never>> {
+  async checkExchange(exchange: string): Promise<{ exchange: string }> {
     this.assertOpen();
     await this.inner.checkExchange(exchange);
-    return {};
+    return { exchange };
   }
 
   // ── Topology: Queues ────────────────────────────────────────────────
