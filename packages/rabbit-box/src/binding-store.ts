@@ -18,6 +18,11 @@ const QUEUE_CLASS_ID = 50;
 const QUEUE_BIND_METHOD_ID = 20;
 const QUEUE_UNBIND_METHOD_ID = 50;
 
+/** AMQP class/method IDs for exchange.bind / exchange.unbind. */
+const EXCHANGE_CLASS_ID = 40;
+const EXCHANGE_BIND_METHOD_ID = 30;
+const EXCHANGE_UNBIND_METHOD_ID = 40;
+
 /** Optional hooks for binding operations. */
 export interface BindingStoreHooks {
   readonly queueBind?: Hook<QueueBindCtx, QueueBindResult>;
@@ -91,8 +96,10 @@ function bindingsMatch(a: Binding, b: Binding): boolean {
  * routingKey = queue name) are virtual and NOT stored here.
  */
 export class BindingStore {
-  /** Bindings indexed by exchange name. */
+  /** Queue bindings indexed by source exchange name. */
   private readonly byExchange = new Map<string, Binding[]>();
+  /** Exchange-to-exchange bindings indexed by source exchange name. */
+  private readonly e2eBySource = new Map<string, Binding[]>();
   private readonly hasExchangeFn: ((name: string) => boolean) | undefined;
   private readonly hasQueueFn: ((name: string) => boolean) | undefined;
   private readonly hooks: BindingStoreHooks;
@@ -254,15 +261,15 @@ export class BindingStore {
       if (this.hasExchangeFn && !this.hasExchangeFn(source)) {
         throw channelError.notFound(
           `no exchange '${source}' in vhost '/'`,
-          QUEUE_CLASS_ID,
-          QUEUE_BIND_METHOD_ID
+          EXCHANGE_CLASS_ID,
+          EXCHANGE_BIND_METHOD_ID
         );
       }
       if (this.hasExchangeFn && !this.hasExchangeFn(destination)) {
         throw channelError.notFound(
           `no exchange '${destination}' in vhost '/'`,
-          QUEUE_CLASS_ID,
-          QUEUE_BIND_METHOD_ID
+          EXCHANGE_CLASS_ID,
+          EXCHANGE_BIND_METHOD_ID
         );
       }
 
@@ -273,10 +280,10 @@ export class BindingStore {
         arguments: { ...args },
       };
 
-      let list = this.byExchange.get(source);
+      let list = this.e2eBySource.get(source);
       if (!list) {
         list = [];
-        this.byExchange.set(source, list);
+        this.e2eBySource.set(source, list);
       }
 
       const duplicate = list.some((b) => bindingsMatch(b, binding));
@@ -313,19 +320,19 @@ export class BindingStore {
       if (this.hasExchangeFn && !this.hasExchangeFn(source)) {
         throw channelError.notFound(
           `no exchange '${source}' in vhost '/'`,
-          QUEUE_CLASS_ID,
-          QUEUE_UNBIND_METHOD_ID
+          EXCHANGE_CLASS_ID,
+          EXCHANGE_UNBIND_METHOD_ID
         );
       }
       if (this.hasExchangeFn && !this.hasExchangeFn(destination)) {
         throw channelError.notFound(
           `no exchange '${destination}' in vhost '/'`,
-          QUEUE_CLASS_ID,
-          QUEUE_UNBIND_METHOD_ID
+          EXCHANGE_CLASS_ID,
+          EXCHANGE_UNBIND_METHOD_ID
         );
       }
 
-      const list = this.byExchange.get(source);
+      const list = this.e2eBySource.get(source);
       if (!list) return undefined;
 
       const target: Binding = {
@@ -339,15 +346,21 @@ export class BindingStore {
 
       list.splice(idx, 1);
       if (list.length === 0) {
-        this.byExchange.delete(source);
+        this.e2eBySource.delete(source);
       }
       return undefined;
     });
   }
 
-  /** Return all bindings for an exchange (defensive copy). */
+  /** Return all queue bindings for an exchange (defensive copy). */
   getBindings(exchange: string): Binding[] {
     const list = this.byExchange.get(exchange);
+    return list ? [...list] : [];
+  }
+
+  /** Return all exchange-to-exchange bindings for a source exchange. */
+  getExchangeBindings(source: string): Binding[] {
+    const list = this.e2eBySource.get(source);
     return list ? [...list] : [];
   }
 
@@ -379,10 +392,23 @@ export class BindingStore {
   /** Remove all bindings for an exchange (cleanup on exchange delete). */
   removeBindingsForExchange(exchange: string): void {
     this.byExchange.delete(exchange);
+    this.e2eBySource.delete(exchange);
+    // Also remove E2E bindings where this exchange is the destination
+    for (const [source, list] of this.e2eBySource) {
+      const filtered = list.filter((b) => b.queue !== exchange);
+      if (filtered.length === 0) {
+        this.e2eBySource.delete(source);
+      } else {
+        this.e2eBySource.set(source, filtered);
+      }
+    }
   }
 
-  /** Return the number of bindings for an exchange. */
+  /** Return the number of bindings for an exchange (queue + E2E). */
   bindingCount(exchange: string): number {
-    return this.byExchange.get(exchange)?.length ?? 0;
+    return (
+      (this.byExchange.get(exchange)?.length ?? 0) +
+      (this.e2eBySource.get(exchange)?.length ?? 0)
+    );
   }
 }

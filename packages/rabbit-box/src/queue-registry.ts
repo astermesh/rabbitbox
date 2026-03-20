@@ -64,6 +64,8 @@ export interface QueueRegistryHooks {
 export interface QueueRegistryOptions {
   generateName?: () => string;
   hooks?: QueueRegistryHooks;
+  /** Returns live message count for a queue. Used instead of stale internal counter. */
+  getMessageCount?: (queueName: string) => number;
 }
 
 function defaultGenerateName(): string {
@@ -115,10 +117,21 @@ export class QueueRegistry {
   private readonly queues = new Map<string, QueueEntry>();
   private readonly generateName: () => string;
   private readonly hooks: QueueRegistryHooks;
+  private readonly getMessageCountFn:
+    | ((queueName: string) => number)
+    | undefined;
 
   constructor(options?: QueueRegistryOptions) {
     this.generateName = options?.generateName ?? defaultGenerateName;
     this.hooks = options?.hooks ?? {};
+    this.getMessageCountFn = options?.getMessageCount;
+  }
+
+  /** Get live message count: from callback if available, otherwise internal counter. */
+  private resolveMessageCount(name: string, entry: QueueEntry): number {
+    return this.getMessageCountFn
+      ? this.getMessageCountFn(name)
+      : entry.messageCount;
   }
 
   declareQueue(
@@ -127,6 +140,9 @@ export class QueueRegistry {
     connectionId?: string
   ): QueueDeclareOk {
     const existingEntry = this.queues.get(name);
+    const existingMessageCount = existingEntry
+      ? this.resolveMessageCount(name, existingEntry)
+      : 0;
     const ctx: QueueDeclareCtx = {
       name,
       durable: opts.durable ?? false,
@@ -135,7 +151,7 @@ export class QueueRegistry {
       arguments: opts.arguments ?? {},
       meta: {
         alreadyExists: existingEntry !== undefined,
-        messageCount: existingEntry?.messageCount ?? 0,
+        messageCount: existingMessageCount,
         consumerCount: existingEntry?.consumerCount ?? 0,
       },
     };
@@ -223,7 +239,7 @@ export class QueueRegistry {
 
         return {
           queue: name,
-          messageCount: existing.messageCount,
+          messageCount: this.resolveMessageCount(name, existing),
           consumerCount: existing.consumerCount,
         };
       }
@@ -247,13 +263,16 @@ export class QueueRegistry {
     connectionId?: string
   ): QueueDeleteOk {
     const existingEntry = this.queues.get(name);
+    const existingMessageCount = existingEntry
+      ? this.resolveMessageCount(name, existingEntry)
+      : 0;
     const ctx: QueueDeleteCtx = {
       name,
       ifUnused: opts?.ifUnused ?? false,
       ifEmpty: opts?.ifEmpty ?? false,
       meta: {
         exists: existingEntry !== undefined,
-        messageCount: existingEntry?.messageCount ?? 0,
+        messageCount: existingMessageCount,
         consumerCount: existingEntry?.consumerCount ?? 0,
       },
     };
@@ -276,6 +295,8 @@ export class QueueRegistry {
         );
       }
 
+      const messageCount = this.resolveMessageCount(name, entry);
+
       if (opts?.ifUnused && entry.consumerCount > 0) {
         throw channelError.preconditionFailed(
           `queue '${name}' in vhost '/' in use`,
@@ -284,7 +305,7 @@ export class QueueRegistry {
         );
       }
 
-      if (opts?.ifEmpty && entry.messageCount > 0) {
+      if (opts?.ifEmpty && messageCount > 0) {
         throw channelError.preconditionFailed(
           `queue '${name}' in vhost '/' is not empty`,
           QUEUE_CLASS,
@@ -292,7 +313,6 @@ export class QueueRegistry {
         );
       }
 
-      const { messageCount } = entry;
       this.queues.delete(name);
       return { messageCount };
     });
@@ -300,11 +320,14 @@ export class QueueRegistry {
 
   checkQueue(name: string, connectionId?: string): QueueDeclareOk {
     const existingEntry = this.queues.get(name);
+    const existingMessageCount = existingEntry
+      ? this.resolveMessageCount(name, existingEntry)
+      : 0;
     const ctx: CheckQueueCtx = {
       name,
       meta: {
         exists: existingEntry !== undefined,
-        messageCount: existingEntry?.messageCount ?? 0,
+        messageCount: existingMessageCount,
         consumerCount: existingEntry?.consumerCount ?? 0,
       },
     };
@@ -329,7 +352,7 @@ export class QueueRegistry {
 
       return {
         queue: name,
-        messageCount: entry.messageCount,
+        messageCount: this.resolveMessageCount(name, entry),
         consumerCount: entry.consumerCount,
       };
     });
@@ -337,11 +360,14 @@ export class QueueRegistry {
 
   purgeQueue(name: string, connectionId?: string): QueueDeleteOk {
     const existingEntry = this.queues.get(name);
+    const existingMessageCount = existingEntry
+      ? this.resolveMessageCount(name, existingEntry)
+      : 0;
     const ctx: PurgeCtx = {
       queue: name,
       meta: {
         queueExists: existingEntry !== undefined,
-        messageCount: existingEntry?.messageCount ?? 0,
+        messageCount: existingMessageCount,
       },
     };
 
@@ -363,7 +389,7 @@ export class QueueRegistry {
         );
       }
 
-      const { messageCount } = entry;
+      const messageCount = this.resolveMessageCount(name, entry);
       entry.messageCount = 0;
       return { messageCount };
     });

@@ -1,9 +1,9 @@
-import { ExchangeRegistry } from '../exchange-registry.ts';
-import { QueueRegistry } from '../queue-registry.ts';
-import { BindingStore } from '../binding-store.ts';
-import { ConsumerRegistry } from '../consumer-registry.ts';
-import { MessageStore } from '../message-store.ts';
-import { Dispatcher } from '../dispatcher.ts';
+import type { ExchangeRegistry } from '../exchange-registry.ts';
+import type { QueueRegistry } from '../queue-registry.ts';
+import type { BindingStore } from '../binding-store.ts';
+import type { ConsumerRegistry } from '../consumer-registry.ts';
+import type { MessageStore } from '../message-store.ts';
+import type { Dispatcher } from '../dispatcher.ts';
 import { Channel } from '../channel.ts';
 import { connectionError } from '../errors/factories.ts';
 import { EventEmitter } from './event-emitter.ts';
@@ -21,10 +21,14 @@ export interface BrokerState {
   readonly consumerRegistry: ConsumerRegistry;
   readonly dispatcher: Dispatcher;
   readonly messageStores: Map<string, MessageStore>;
+  /** Lazy-create and return the message store for a queue. */
+  readonly getMessageStore: (queueName: string) => MessageStore;
   /** Called when a message expires (TTL). Used for dead-lettering. */
   readonly onExpire?: (queueName: string, message: BrokerMessage) => void;
   /** Time provider for TTL expiry checks. */
   readonly now?: () => number;
+  /** SBI hooks passed through from RabbitBox.create(). */
+  readonly hooks?: Partial<import('@rabbitbox/sbi').RabbitHooks>;
 }
 
 export class ApiConnection extends EventEmitter<ConnectionEvents> {
@@ -48,7 +52,7 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
 
   /** Create a new connection sharing the same broker state. */
   createConnection(username?: string): ApiConnection {
-    const id = `${this.connectionId}-conn-${Date.now()}`;
+    const id = `${this.connectionId}-conn-${this.state.now?.() ?? Date.now()}`;
     return new ApiConnection(id, this.state, username ?? this.username);
   }
 
@@ -102,6 +106,8 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
       removeMessageStore: (name) => this.state.messageStores.delete(name),
       getAllQueueNames: () => this.state.messageStores.keys(),
       authenticatedUserId: this.username,
+      now: this.state.now,
+      hooks: this.state.hooks,
     });
 
     this.channels.set(num, { api: apiChannel, internal });
@@ -148,15 +154,7 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
   }
 
   getMessageStore(queueName: string): MessageStore {
-    let store = this.state.messageStores.get(queueName);
-    if (!store) {
-      const queue = this.state.queueRegistry.getQueue(queueName);
-      store = new MessageStore({
-        messageTtl: queue?.messageTtl,
-      });
-      this.state.messageStores.set(queueName, store);
-    }
-    return store;
+    return this.state.getMessageStore(queueName);
   }
 
   private getInternalChannel(channelNumber: number): Channel | undefined {

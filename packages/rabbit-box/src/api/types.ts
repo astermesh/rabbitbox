@@ -1,10 +1,13 @@
 import type { RabbitHooks } from '@rabbitbox/sbi';
 import type { ExchangeType } from '../types/exchange.ts';
 import type { MessageProperties } from '../types/message.ts';
+import type { ObiHooks } from '../obi/types.ts';
 
 /** Options for RabbitBox.create(). */
 export interface RabbitBoxOptions {
   readonly hooks?: Partial<RabbitHooks>;
+  /** Outbound dependency injection (time, timers, random, delivery scheduling). */
+  readonly obi?: Partial<ObiHooks>;
   /** Authenticated username for user-id validation (default: 'guest'). */
   readonly username?: string;
   /** Reserved for future multi-vhost support. */

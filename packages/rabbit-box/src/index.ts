@@ -59,8 +59,6 @@ export type {
   CheckQueueResult,
   DequeueResult,
 } from './channel.ts';
-export { Connection, createConnection } from './connection.ts';
-export type { ConnectionState, ConnectionDeps } from './connection.ts';
 export { ConsumerRegistry } from './consumer-registry.ts';
 export type {
   ConsumeOptions,

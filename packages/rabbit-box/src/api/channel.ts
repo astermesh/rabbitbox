@@ -49,6 +49,10 @@ export interface ApiChannelDeps {
   readonly getAllQueueNames: () => Iterable<string>;
   /** Authenticated username for user-id validation. */
   readonly authenticatedUserId: string;
+  /** Time provider from OBI. */
+  readonly now?: () => number;
+  /** SBI hooks for channel-level operations. */
+  readonly hooks?: Partial<import('@rabbitbox/sbi').RabbitHooks>;
 }
 
 export class ApiChannel extends EventEmitter<ChannelEvents> {
@@ -81,7 +85,7 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
           getQueue: (name) => this.deps.queueRegistry.getQueue(name),
           exchangeExists: (name) =>
             this.deps.exchangeRegistry.hasExchange(name),
-          now: () => Date.now(),
+          now: this.deps.now ?? (() => Date.now()),
           republish: (exchange, routingKey, body, properties) => {
             publish({
               exchange,
@@ -103,6 +107,7 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
                 );
               },
               authenticatedUserId: this.deps.authenticatedUserId,
+              now: this.deps.now,
             });
           },
         });
@@ -271,6 +276,8 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
           );
         },
         authenticatedUserId: this.deps.authenticatedUserId,
+        now: this.deps.now,
+        hook: this.deps.hooks?.publish,
       });
 
       // In confirm mode, send basic.ack after publish completes.
