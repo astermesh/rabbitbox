@@ -6,7 +6,8 @@
   "type": "module",
   "workspaces": [
     "packages/rabbit-sbi",
-    "packages/rabbit-box"
+    "packages/rabbit-box",
+    "packages/rabbit-amqplib"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
