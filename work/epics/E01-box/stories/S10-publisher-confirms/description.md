@@ -1,5 +1,7 @@
 # S10: Publisher Confirms
 
+**Status:** done
+
 Implement publisher confirm mode with delivery tag tracking, matching RabbitMQ's confirm semantics.
 
 ## Scope

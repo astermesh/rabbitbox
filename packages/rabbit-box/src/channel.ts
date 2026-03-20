@@ -15,8 +15,14 @@ import type {
   ConfirmSelectCtx,
   ConfirmSelectResult,
 } from '@rabbitbox/sbi';
-import { connectionError } from './errors/factories.ts';
+import { channelError, connectionError } from './errors/factories.ts';
 import { runHooked } from './hook-runner.ts';
+
+/** AMQP class/method IDs for confirm.select and tx.select. */
+const CONFIRM_CLASS = 85;
+const CONFIRM_SELECT = 10;
+const TX_CLASS = 90;
+const TX_SELECT = 10;
 
 /** AMQP class/method IDs for channel operations. */
 const CHANNEL_CLASS = 20;
@@ -100,6 +106,15 @@ export class Channel {
 
   /** Whether publisher confirms are enabled on this channel. */
   private _confirmMode = false;
+
+  /** Whether transaction mode is enabled on this channel. */
+  private _txMode = false;
+
+  /**
+   * Publisher delivery tag sequence — separate from consumer delivery tags.
+   * Starts at 1, increments per publish on this channel when in confirm mode.
+   */
+  private publisherDeliveryTagSeq = 0;
 
   constructor(channelNumber: number, deps: ChannelDeps, hooks?: ChannelHooks) {
     this.channelNumber = channelNumber;
@@ -401,22 +416,70 @@ export class Channel {
     return this._confirmMode;
   }
 
+  /** Whether transaction mode is active. */
+  get txMode(): boolean {
+    return this._txMode;
+  }
+
+  /**
+   * Generate the next publisher delivery tag for this channel.
+   * Tags start at 1 and increment per publish (per-channel scope).
+   * This is SEPARATE from the consumer delivery tag sequence.
+   */
+  nextPublisherDeliveryTag(): number {
+    this.assertOpen();
+    return ++this.publisherDeliveryTagSeq;
+  }
+
   /**
    * Enable publisher confirms on this channel (confirm.select).
+   *
+   * - Irreversible: cannot be disabled once enabled.
+   * - Idempotent: calling on an already-confirmed channel is a no-op.
+   * - Mutually exclusive with tx mode: throws PRECONDITION_FAILED if tx active.
    */
   confirmSelect(): void {
     const ctx: ConfirmSelectCtx = {
       meta: {
         alreadyInConfirmMode: this._confirmMode,
-        channelIsTransactional: false,
+        channelIsTransactional: this._txMode,
       },
     };
 
     runHooked(this.hooks.confirmSelect, ctx, () => {
       this.assertOpen();
+
+      if (this._txMode) {
+        throw channelError.preconditionFailed(
+          'cannot switch from tx to confirm mode',
+          CONFIRM_CLASS,
+          CONFIRM_SELECT
+        );
+      }
+
       this._confirmMode = true;
       return undefined;
     });
+  }
+
+  /**
+   * Enable transaction mode on this channel (tx.select).
+   *
+   * Mutually exclusive with confirm mode: throws PRECONDITION_FAILED
+   * if confirms are active.
+   */
+  txSelect(): void {
+    this.assertOpen();
+
+    if (this._confirmMode) {
+      throw channelError.preconditionFailed(
+        'cannot switch from confirm to tx mode',
+        TX_CLASS,
+        TX_SELECT
+      );
+    }
+
+    this._txMode = true;
   }
 
   /**

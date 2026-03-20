@@ -1,5 +1,7 @@
 # T01: Confirm Mode
 
+**Status:** done
+
 Implement publisher confirm mode on channels.
 
 ## Scope

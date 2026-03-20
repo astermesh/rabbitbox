@@ -7,7 +7,11 @@ import type {
 } from './channel.ts';
 import type { BrokerMessage } from './types/message.ts';
 import { ChannelError, ConnectionError } from './errors/amqp-error.ts';
-import { CHANNEL_ERROR, NOT_FOUND } from './errors/reply-codes.ts';
+import {
+  CHANNEL_ERROR,
+  NOT_FOUND,
+  PRECONDITION_FAILED,
+} from './errors/reply-codes.ts';
 import { channelError } from './errors/factories.ts';
 
 function makeMessage(body = 'test', deliveryCount = 0): BrokerMessage {
@@ -659,6 +663,107 @@ describe('Channel', () => {
       expect(() => channel.checkQueue('my-queue')).toThrow(
         'onCheckQueue dependency not provided'
       );
+    });
+  });
+
+  // ── confirmSelect ─────────────────────────────────────────────────
+
+  describe('confirmSelect', () => {
+    it('enables confirm mode', () => {
+      expect(channel.confirmMode).toBe(false);
+      channel.confirmSelect();
+      expect(channel.confirmMode).toBe(true);
+    });
+
+    it('is idempotent — calling again on already-confirmed channel is fine', () => {
+      channel.confirmSelect();
+      channel.confirmSelect();
+      expect(channel.confirmMode).toBe(true);
+    });
+
+    it('is irreversible — no way to disable once enabled', () => {
+      channel.confirmSelect();
+      // There's no disableConfirm method; confirmMode stays true
+      expect(channel.confirmMode).toBe(true);
+    });
+
+    it('throws PRECONDITION_FAILED if tx mode is active', () => {
+      channel.txSelect();
+      expect(() => channel.confirmSelect()).toThrow(ChannelError);
+      try {
+        channel.confirmSelect();
+      } catch (err) {
+        expect((err as ChannelError).replyCode).toBe(PRECONDITION_FAILED);
+      }
+    });
+
+    it('throws on closed channel', () => {
+      channel.close();
+      expect(() => channel.confirmSelect()).toThrow(ConnectionError);
+    });
+  });
+
+  // ── txSelect ──────────────────────────────────────────────────────
+
+  describe('txSelect', () => {
+    it('enables tx mode', () => {
+      expect(channel.txMode).toBe(false);
+      channel.txSelect();
+      expect(channel.txMode).toBe(true);
+    });
+
+    it('throws PRECONDITION_FAILED if confirm mode is active', () => {
+      channel.confirmSelect();
+      expect(() => channel.txSelect()).toThrow(ChannelError);
+      try {
+        channel.txSelect();
+      } catch (err) {
+        expect((err as ChannelError).replyCode).toBe(PRECONDITION_FAILED);
+      }
+    });
+
+    it('throws on closed channel', () => {
+      channel.close();
+      expect(() => channel.txSelect()).toThrow(ConnectionError);
+    });
+  });
+
+  // ── Publisher delivery tag sequence ───────────────────────────────
+
+  describe('publisher delivery tag sequence', () => {
+    it('starts at 1', () => {
+      expect(channel.nextPublisherDeliveryTag()).toBe(1);
+    });
+
+    it('increments sequentially', () => {
+      expect(channel.nextPublisherDeliveryTag()).toBe(1);
+      expect(channel.nextPublisherDeliveryTag()).toBe(2);
+      expect(channel.nextPublisherDeliveryTag()).toBe(3);
+    });
+
+    it('is independent from consumer delivery tag sequence', () => {
+      const consumerTag1 = channel.nextDeliveryTag();
+      const publisherTag1 = channel.nextPublisherDeliveryTag();
+      const consumerTag2 = channel.nextDeliveryTag();
+      const publisherTag2 = channel.nextPublisherDeliveryTag();
+
+      expect(consumerTag1).toBe(1);
+      expect(publisherTag1).toBe(1);
+      expect(consumerTag2).toBe(2);
+      expect(publisherTag2).toBe(2);
+    });
+
+    it('is per-channel (independent across channels)', () => {
+      const ch2 = new Channel(2, deps);
+      expect(channel.nextPublisherDeliveryTag()).toBe(1);
+      expect(ch2.nextPublisherDeliveryTag()).toBe(1);
+      expect(channel.nextPublisherDeliveryTag()).toBe(2);
+      expect(ch2.nextPublisherDeliveryTag()).toBe(2);
+    });
+
+    it('throws on closed channel', () => {
+      channel.close();
+      expect(() => channel.nextPublisherDeliveryTag()).toThrow(ConnectionError);
     });
   });
 });

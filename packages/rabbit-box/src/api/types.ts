@@ -85,12 +85,20 @@ export interface ConnectionEvents {
   close: () => void;
 }
 
+/** Publisher confirm event payload (basic.ack / basic.nack from broker). */
+export interface ConfirmEvent {
+  readonly deliveryTag: number;
+  readonly multiple: boolean;
+}
+
 /** Channel event map. */
 export interface ChannelEvents {
   error: (err: Error) => void;
   close: () => void;
   return: (msg: ReturnedMessage) => void;
   drain: () => void;
+  ack: (confirm: ConfirmEvent) => void;
+  nack: (confirm: ConfirmEvent) => void;
 }
 
 /** A message returned via basic.return. */

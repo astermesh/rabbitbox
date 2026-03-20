@@ -26,6 +26,7 @@ import type {
   PublishMessageOptions,
   PurgeResult,
   ReturnedMessage,
+  ConfirmEvent,
 } from './types.ts';
 
 /** Dependencies injected into ApiChannel by ApiConnection. */
@@ -54,6 +55,12 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
   private readonly deps: ApiChannelDeps;
   private closed = false;
   private readonly ackDeps: AcknowledgmentDeps;
+
+  /** Pending publisher delivery tags not yet confirmed. */
+  private readonly pendingConfirms = new Set<number>();
+
+  /** Resolve callbacks for waitForConfirms() callers. */
+  private readonly confirmWaiters: (() => void)[] = [];
 
   constructor(deps: ApiChannelDeps) {
     super();
@@ -222,38 +229,67 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     options?: PublishMessageOptions
   ): boolean {
     this.assertOpen();
-    const properties = this.buildProperties(options);
-    publish({
-      exchange,
-      routingKey,
-      body: content,
-      properties,
-      mandatory: options?.mandatory ?? false,
-      immediate: false,
-      exchangeRegistry: this.deps.exchangeRegistry,
-      bindingStore: this.deps.bindingStore,
-      queueRegistry: this.deps.queueRegistry,
-      getMessageStore: this.deps.getMessageStore,
-      onReturn: (replyCode, replyText, ex, rk, body, props) => {
-        const msg: ReturnedMessage = {
-          replyCode,
-          replyText,
-          exchange: ex,
-          routingKey: rk,
-          body,
-          properties: props,
-        };
-        this.emit('return', msg);
-      },
-      onDispatch: (queueName) => {
-        this.deps.dispatcher.dispatch(
-          queueName,
-          this.deps.getMessageStore(queueName),
-          this.deps.getChannel
-        );
-      },
-      authenticatedUserId: this.deps.authenticatedUserId,
-    });
+    const inConfirmMode = this.deps.channel.confirmMode;
+    const deliveryTag = inConfirmMode
+      ? this.deps.channel.nextPublisherDeliveryTag()
+      : 0;
+
+    if (deliveryTag > 0) {
+      this.pendingConfirms.add(deliveryTag);
+    }
+
+    try {
+      const properties = this.buildProperties(options);
+      publish({
+        exchange,
+        routingKey,
+        body: content,
+        properties,
+        mandatory: options?.mandatory ?? false,
+        immediate: false,
+        exchangeRegistry: this.deps.exchangeRegistry,
+        bindingStore: this.deps.bindingStore,
+        queueRegistry: this.deps.queueRegistry,
+        getMessageStore: this.deps.getMessageStore,
+        onReturn: (replyCode, replyText, ex, rk, body, props) => {
+          const msg: ReturnedMessage = {
+            replyCode,
+            replyText,
+            exchange: ex,
+            routingKey: rk,
+            body,
+            properties: props,
+          };
+          // basic.return is emitted BEFORE basic.ack (handled by ordering below)
+          this.emit('return', msg);
+        },
+        onDispatch: (queueName) => {
+          this.deps.dispatcher.dispatch(
+            queueName,
+            this.deps.getMessageStore(queueName),
+            this.deps.getChannel
+          );
+        },
+        authenticatedUserId: this.deps.authenticatedUserId,
+      });
+
+      // In confirm mode, send basic.ack after publish completes.
+      // For mandatory unroutable messages, basic.return was already emitted
+      // above (during publish pipeline), so the ordering is correct:
+      // basic.return BEFORE basic.ack.
+      if (deliveryTag > 0) {
+        this.pendingConfirms.delete(deliveryTag);
+        this.emitConfirmAck(deliveryTag);
+      }
+    } catch (err) {
+      // On internal error, send basic.nack (rare — only for broker errors)
+      if (deliveryTag > 0) {
+        this.pendingConfirms.delete(deliveryTag);
+        this.emitConfirmNack(deliveryTag);
+      }
+      throw err;
+    }
+
     return true;
   }
 
@@ -378,6 +414,21 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     return { active };
   }
 
+  // ── Publisher Confirms ─────────────────────────────────────────────
+
+  async confirmSelect(): Promise<void> {
+    this.assertOpen();
+    this.deps.channel.confirmSelect();
+  }
+
+  async waitForConfirms(): Promise<void> {
+    this.assertOpen();
+    if (this.pendingConfirms.size === 0) return;
+    return new Promise<void>((resolve) => {
+      this.confirmWaiters.push(resolve);
+    });
+  }
+
   // ── Close ───────────────────────────────────────────────────────────
 
   async close(): Promise<void> {
@@ -436,6 +487,27 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
   private updateConsumerUnacked(message: DeliveredMessage): void {
     if (message.consumerTag) {
       this.deps.consumerRegistry.decrementUnacked(message.consumerTag);
+    }
+  }
+
+  private emitConfirmAck(deliveryTag: number): void {
+    const event: ConfirmEvent = { deliveryTag, multiple: false };
+    this.emit('ack', event);
+    this.drainConfirmWaiters();
+  }
+
+  private emitConfirmNack(deliveryTag: number): void {
+    const event: ConfirmEvent = { deliveryTag, multiple: false };
+    this.emit('nack', event);
+    this.drainConfirmWaiters();
+  }
+
+  private drainConfirmWaiters(): void {
+    if (this.pendingConfirms.size === 0 && this.confirmWaiters.length > 0) {
+      const waiters = this.confirmWaiters.splice(0);
+      for (const resolve of waiters) {
+        resolve();
+      }
     }
   }
 
