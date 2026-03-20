@@ -1140,8 +1140,10 @@ describe('E2E integration tests', () => {
       const headers = assertMsg(dlxMsg).properties.headers;
       expect(headers?.['x-first-death-queue']).toBe('source-q');
       expect(headers?.['x-first-death-reason']).toBe('rejected');
+      expect(headers?.['x-first-death-exchange']).toBe('');
       expect(headers?.['x-last-death-queue']).toBe('source-q');
       expect(headers?.['x-last-death-reason']).toBe('rejected');
+      expect(headers?.['x-last-death-exchange']).toBe('');
       await conn.close();
     });
 

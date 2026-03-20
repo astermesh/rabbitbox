@@ -362,7 +362,7 @@ describe('dead-letter', () => {
 
   // ── Quick-access headers ─────────────────────────────────────────
 
-  it('sets x-first-death-queue and x-first-death-reason on first death', () => {
+  it('sets x-first-death-queue, x-first-death-reason, and x-first-death-exchange on first death', () => {
     const msg = makeMessage();
 
     deadLetter(msg, 'source-q', 'rejected', deps);
@@ -370,9 +370,10 @@ describe('dead-letter', () => {
     const [, , , props] = republish.mock.calls[0] as RepublishArgs;
     expect(props.headers?.['x-first-death-queue']).toBe('source-q');
     expect(props.headers?.['x-first-death-reason']).toBe('rejected');
+    expect(props.headers?.['x-first-death-exchange']).toBe('original-ex');
   });
 
-  it('sets x-last-death-queue and x-last-death-reason', () => {
+  it('sets x-last-death-queue, x-last-death-reason, and x-last-death-exchange', () => {
     const msg = makeMessage();
 
     deadLetter(msg, 'source-q', 'rejected', deps);
@@ -380,6 +381,7 @@ describe('dead-letter', () => {
     const [, , , props] = republish.mock.calls[0] as RepublishArgs;
     expect(props.headers?.['x-last-death-queue']).toBe('source-q');
     expect(props.headers?.['x-last-death-reason']).toBe('rejected');
+    expect(props.headers?.['x-last-death-exchange']).toBe('original-ex');
   });
 
   it('preserves x-first-death headers on subsequent deaths', () => {
@@ -398,8 +400,10 @@ describe('dead-letter', () => {
           ] as XDeathEntry[],
           'x-first-death-queue': 'first-q',
           'x-first-death-reason': 'expired',
+          'x-first-death-exchange': 'ex',
           'x-last-death-queue': 'first-q',
           'x-last-death-reason': 'expired',
+          'x-last-death-exchange': 'ex',
         },
       },
     });
@@ -410,9 +414,11 @@ describe('dead-letter', () => {
     // First-death headers preserved
     expect(props.headers?.['x-first-death-queue']).toBe('first-q');
     expect(props.headers?.['x-first-death-reason']).toBe('expired');
+    expect(props.headers?.['x-first-death-exchange']).toBe('ex');
     // Last-death headers updated
     expect(props.headers?.['x-last-death-queue']).toBe('source-q');
     expect(props.headers?.['x-last-death-reason']).toBe('rejected');
+    expect(props.headers?.['x-last-death-exchange']).toBe('original-ex');
   });
 
   // ── Preserves existing headers ───────────────────────────────────

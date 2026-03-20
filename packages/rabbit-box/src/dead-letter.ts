@@ -87,9 +87,11 @@ export function deadLetter(
   if (!headers['x-first-death-queue']) {
     headers['x-first-death-queue'] = queueName;
     headers['x-first-death-reason'] = reason;
+    headers['x-first-death-exchange'] = message.exchange;
   }
   headers['x-last-death-queue'] = queueName;
   headers['x-last-death-reason'] = reason;
+  headers['x-last-death-exchange'] = message.exchange;
 
   // Remove expiration property, keep everything else
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
