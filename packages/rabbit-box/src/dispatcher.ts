@@ -10,6 +10,11 @@ import type { DeliveredMessage, BrokerMessage } from './types/message.ts';
  * rotating fairly across consumers and respecting both per-consumer and
  * per-channel prefetch limits. Handles lazy TTL expiry at queue head
  * before delivery.
+ *
+ * Supports consumer priorities: higher-priority consumers receive messages
+ * first, with round-robin within the same priority level. Lower-priority
+ * consumers only receive messages when all higher-priority consumers are
+ * at their prefetch limits.
  */
 export interface DispatcherOptions {
   /** Async delivery scheduler. Defaults to queueMicrotask(). */
@@ -22,8 +27,10 @@ export interface DispatcherOptions {
 
 export class Dispatcher {
   private readonly registry: ConsumerRegistry;
-  /** Per-queue round-robin index. */
+  /** Per-queue round-robin index (used for uniform-priority fast path). */
   private readonly rrIndex = new Map<string, number>();
+  /** Per-queue-per-priority round-robin index (used for mixed-priority dispatch). */
+  private readonly priorityRrIndex = new Map<string, number>();
   private readonly schedule: (callback: () => void) => void;
   private readonly now: () => number;
   private readonly onExpire:
@@ -76,25 +83,118 @@ export class Dispatcher {
       return;
     }
 
+    // Check if consumers have mixed priorities.
+    // Consumers are sorted by priority descending, so comparing first and last
+    // is sufficient to detect mixed priorities.
+    const first = consumers[0];
+    const last = consumers[consumers.length - 1];
+    const hasMixedPriorities =
+      consumers.length > 1 &&
+      first !== undefined &&
+      last !== undefined &&
+      first.priority !== last.priority;
+
+    if (hasMixedPriorities) {
+      this.dispatchWithPriority(queueName, consumers, store, getChannel);
+    } else {
+      this.dispatchRoundRobin(queueName, consumers, store, getChannel);
+    }
+  }
+
+  /**
+   * Standard round-robin dispatch for consumers at the same priority level.
+   */
+  private dispatchRoundRobin(
+    queueName: string,
+    consumers: readonly ConsumerEntry[],
+    store: IMessageStore,
+    getChannel: (channelNumber: number) => Channel | undefined
+  ): void {
     let startIndex = this.rrIndex.get(queueName) ?? 0;
 
     while (store.count() > 0) {
-      const eligible = this.findEligibleConsumer(
+      const eligible = this.findEligibleRoundRobin(
         consumers,
         startIndex,
         getChannel
       );
-      if (!eligible) break; // all consumers at limit or unavailable
+      if (!eligible) break;
 
       const message = store.dequeue();
       if (!message) break;
 
-      const { consumer, channel, nextIndex } = eligible;
-
-      this.deliver(consumer, channel, message);
-      startIndex = nextIndex;
+      this.deliver(eligible.consumer, eligible.channel, message);
+      startIndex = eligible.nextIndex;
       this.rrIndex.set(queueName, startIndex);
     }
+  }
+
+  /**
+   * Priority-aware dispatch: try highest priority level first, with
+   * round-robin within each level. Only falls through to lower priority
+   * when all consumers at higher priority are at their prefetch limits.
+   */
+  private dispatchWithPriority(
+    queueName: string,
+    consumers: readonly ConsumerEntry[],
+    store: IMessageStore,
+    getChannel: (channelNumber: number) => Channel | undefined
+  ): void {
+    while (store.count() > 0) {
+      const eligible = this.findEligibleByPriority(
+        queueName,
+        consumers,
+        getChannel
+      );
+      if (!eligible) break;
+
+      const message = store.dequeue();
+      if (!message) break;
+
+      this.deliver(eligible.consumer, eligible.channel, message);
+    }
+  }
+
+  /**
+   * Find the next eligible consumer respecting priority levels.
+   *
+   * Groups consumers by priority (they are already sorted descending).
+   * For each priority level from highest to lowest, tries round-robin
+   * within that level. Returns the first eligible consumer found.
+   */
+  private findEligibleByPriority(
+    queueName: string,
+    consumers: readonly ConsumerEntry[],
+    getChannel: (channelNumber: number) => Channel | undefined
+  ): { consumer: ConsumerEntry; channel: Channel } | null {
+    // Group consumers by priority (consumers are sorted by priority desc)
+    let groupStart = 0;
+    while (groupStart < consumers.length) {
+      const startEntry = consumers[groupStart];
+      if (!startEntry) break;
+      const currentPriority = startEntry.priority;
+      let groupEnd = groupStart + 1;
+      while (groupEnd < consumers.length) {
+        const entry = consumers[groupEnd];
+        if (!entry || entry.priority !== currentPriority) break;
+        groupEnd++;
+      }
+
+      const group = consumers.slice(groupStart, groupEnd);
+      const rrKey = `${queueName}:${currentPriority}`;
+      const rrStart = this.priorityRrIndex.get(rrKey) ?? 0;
+
+      const result = this.findEligibleRoundRobin(group, rrStart, getChannel);
+      if (result) {
+        this.priorityRrIndex.set(rrKey, result.nextIndex);
+        return { consumer: result.consumer, channel: result.channel };
+      }
+
+      // No eligible consumer at this priority → try lower
+      groupStart = groupEnd;
+    }
+
+    return null;
   }
 
   /**
@@ -144,7 +244,7 @@ export class Dispatcher {
    * - It is not at its per-consumer prefetch limit (or is noAck)
    * - Its channel is not at the per-channel prefetch limit (or consumer is noAck)
    */
-  private findEligibleConsumer(
+  private findEligibleRoundRobin(
     consumers: readonly ConsumerEntry[],
     startIndex: number,
     getChannel: (channelNumber: number) => Channel | undefined

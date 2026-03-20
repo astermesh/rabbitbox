@@ -207,6 +207,7 @@ describe('core domain types', () => {
         callback: () => {},
         noAck: false,
         exclusive: false,
+        priority: 0,
       };
       expect(consumer.consumerTag).toBe('ctag-1');
       expect(consumer.noAck).toBe(false);

@@ -311,7 +311,9 @@ describe('ApiChannel', () => {
       await setup();
       await ch.assertQueue('test-q');
       const msgs: DeliveredMessage[] = [];
-      await ch.consume('test-q', (msg) => msgs.push(msg));
+      await ch.consume('test-q', (msg) => {
+        if (msg) msgs.push(msg);
+      });
       ch.sendToQueue('test-q', new Uint8Array([1]));
       await new Promise((r) => setTimeout(r, 10));
       expect(msgs).toHaveLength(1);
@@ -326,6 +328,7 @@ describe('ApiChannel', () => {
       await ch.assertQueue('test-q');
       const msgs: DeliveredMessage[] = [];
       await ch.consume('test-q', (msg) => {
+        if (!msg) return;
         msgs.push(msg);
         if (!msg.redelivered) {
           ch.nack(msg, false, true);
@@ -344,6 +347,7 @@ describe('ApiChannel', () => {
       await ch.assertQueue('test-q');
       const msgs: DeliveredMessage[] = [];
       await ch.consume('test-q', (msg) => {
+        if (!msg) return;
         msgs.push(msg);
         ch.reject(msg, false);
       });
@@ -392,6 +396,7 @@ describe('ApiChannel', () => {
       const msgs: DeliveredMessage[] = [];
       let recovered = false;
       await ch.consume('test-q', (msg) => {
+        if (!msg) return;
         msgs.push(msg);
         if (!recovered) {
           recovered = true;
@@ -493,16 +498,21 @@ describe('ApiChannel', () => {
     it('deleteQueue cancels consumers on that queue', async () => {
       await setup();
       await ch.assertQueue('test-q');
-      const msgs: DeliveredMessage[] = [];
+      const msgs: (DeliveredMessage | null)[] = [];
       await ch.consume('test-q', (msg) => msgs.push(msg), { noAck: true });
 
       await ch.deleteQueue('test-q');
+      await new Promise((r) => setTimeout(r, 10));
 
-      // Re-create queue and publish — old consumer should not receive
+      // Server-cancel notification: callback receives null
+      expect(msgs.filter((m) => m === null)).toHaveLength(1);
+
+      // Re-create queue and publish — old consumer should not receive new messages
       await ch.assertQueue('test-q');
       ch.sendToQueue('test-q', new Uint8Array([1]));
       await new Promise((r) => setTimeout(r, 20));
-      expect(msgs).toHaveLength(0);
+      // Only the null from server-cancel, no actual messages
+      expect(msgs.filter((m) => m !== null)).toHaveLength(0);
     });
   });
 

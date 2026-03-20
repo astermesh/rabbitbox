@@ -47,7 +47,9 @@ describe('Dispatcher', () => {
     it('delivers a message to a single consumer', async () => {
       const channel = new Channel(1, makeDeps());
       const received: DeliveredMessage[] = [];
-      const cb = (msg: DeliveredMessage) => received.push(msg);
+      const cb = (msg: DeliveredMessage | null) => {
+        if (msg) received.push(msg);
+      };
       const store = new MessageStore();
 
       registry.register('q1', 1, cb, {});
@@ -73,7 +75,9 @@ describe('Dispatcher', () => {
     it('assigns sequential delivery tags from channel', async () => {
       const channel = new Channel(1, makeDeps());
       const tags: number[] = [];
-      const cb = (msg: DeliveredMessage) => tags.push(msg.deliveryTag);
+      const cb = (msg: DeliveredMessage | null) => {
+        if (msg) tags.push(msg.deliveryTag);
+      };
       const store = new MessageStore();
 
       registry.register('q1', 1, cb, {});
@@ -147,7 +151,9 @@ describe('Dispatcher', () => {
     it('sets redelivered=true for messages with deliveryCount > 0', async () => {
       const channel = new Channel(1, makeDeps());
       const received: DeliveredMessage[] = [];
-      const cb = (msg: DeliveredMessage) => received.push(msg);
+      const cb = (msg: DeliveredMessage | null) => {
+        if (msg) received.push(msg);
+      };
       const store = new MessageStore();
 
       registry.register('q1', 1, cb, {});
@@ -164,7 +170,9 @@ describe('Dispatcher', () => {
     it('includes consumerTag in delivered message', async () => {
       const channel = new Channel(1, makeDeps());
       const received: DeliveredMessage[] = [];
-      const cb = (msg: DeliveredMessage) => received.push(msg);
+      const cb = (msg: DeliveredMessage | null) => {
+        if (msg) received.push(msg);
+      };
       const store = new MessageStore();
 
       registry.register('q1', 1, cb, { consumerTag: 'my-tag' });
@@ -181,7 +189,9 @@ describe('Dispatcher', () => {
     it('delivers consumer callback asynchronously via microtask', () => {
       const channel = new Channel(1, makeDeps());
       const received: DeliveredMessage[] = [];
-      const cb = (msg: DeliveredMessage) => received.push(msg);
+      const cb = (msg: DeliveredMessage | null) => {
+        if (msg) received.push(msg);
+      };
       const store = new MessageStore();
 
       registry.register('q1', 1, cb, {});
@@ -209,13 +219,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -245,13 +259,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -286,13 +304,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -320,7 +342,9 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
 
@@ -349,13 +373,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
 
@@ -404,7 +432,9 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -433,7 +463,9 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
 
@@ -460,13 +492,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
       registry.register(
         'q1',
         1,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
 
@@ -496,13 +532,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
       registry.register(
         'q1',
         1,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
 
@@ -595,7 +635,14 @@ describe('Dispatcher', () => {
       const received: DeliveredMessage[] = [];
       const store = new MessageStore({ now: () => time });
 
-      reg.register('q1', 1, (msg) => received.push(msg), { noAck: true });
+      reg.register(
+        'q1',
+        1,
+        (msg) => {
+          if (msg) received.push(msg);
+        },
+        { noAck: true }
+      );
 
       // Enqueue expired message (TTL=1000, enqueued at 10000, expires at 11000)
       store.enqueue(
@@ -661,7 +708,14 @@ describe('Dispatcher', () => {
       const received: DeliveredMessage[] = [];
       const store = new MessageStore({ messageTtl: 0, now: () => time });
 
-      reg.register('q1', 1, (msg) => received.push(msg), { noAck: true });
+      reg.register(
+        'q1',
+        1,
+        (msg) => {
+          if (msg) received.push(msg);
+        },
+        { noAck: true }
+      );
 
       // expiresAt = 10000, now() = 10000 → strict < means NOT expired
       store.enqueue(makeMessage('ttl-zero'));
@@ -725,7 +779,14 @@ describe('Dispatcher', () => {
       const received: DeliveredMessage[] = [];
       const store = new MessageStore({ now: () => time });
 
-      reg.register('q1', 1, (msg) => received.push(msg), { noAck: true });
+      reg.register(
+        'q1',
+        1,
+        (msg) => {
+          if (msg) received.push(msg);
+        },
+        { noAck: true }
+      );
 
       // Message A: no TTL (never expires)
       store.enqueue(makeMessage('no-ttl'));
@@ -762,13 +823,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -797,12 +862,26 @@ describe('Dispatcher', () => {
 
       registry.markSingleActiveConsumer('q1');
       registry.register('q1', 1, vi.fn(), { noAck: true });
-      registry.register('q1', 2, (msg) => received2.push(msg), {
-        noAck: true,
-      });
-      registry.register('q1', 3, (msg) => received3.push(msg), {
-        noAck: true,
-      });
+      registry.register(
+        'q1',
+        2,
+        (msg) => {
+          if (msg) received2.push(msg);
+        },
+        {
+          noAck: true,
+        }
+      );
+      registry.register(
+        'q1',
+        3,
+        (msg) => {
+          if (msg) received3.push(msg);
+        },
+        {
+          noAck: true,
+        }
+      );
 
       store.enqueue(makeMessage('a'));
       store.enqueue(makeMessage('b'));
@@ -830,13 +909,17 @@ describe('Dispatcher', () => {
       const tag1 = registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -876,19 +959,25 @@ describe('Dispatcher', () => {
       const tag1 = registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       const tag2 = registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         3,
-        (msg) => received3.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received3.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -929,7 +1018,9 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received.push(new TextDecoder().decode(msg.body));
+        },
         {}
       );
       registry.register('q1', 2, vi.fn(), {});
@@ -971,13 +1062,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -1003,7 +1098,9 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -1027,13 +1124,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -1071,7 +1172,9 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => received1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -1083,7 +1186,9 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         2,
-        (msg) => received2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -1105,7 +1210,9 @@ describe('Dispatcher', () => {
       const tag = registry.register(
         'q1',
         1,
-        (msg) => received.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) received.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 
@@ -1133,13 +1240,17 @@ describe('Dispatcher', () => {
       registry.register(
         'q1',
         1,
-        (msg) => receivedQ1.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) receivedQ1.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
       registry.register(
         'q2',
         1,
-        (msg) => receivedQ2.push(new TextDecoder().decode(msg.body)),
+        (msg) => {
+          if (msg) receivedQ2.push(new TextDecoder().decode(msg.body));
+        },
         { noAck: true }
       );
 

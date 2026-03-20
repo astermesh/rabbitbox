@@ -1,5 +1,7 @@
 # S12: Auto-Delete & Consumer Features
 
+**Status:** done
+
 Implement auto-delete behavior for exchanges and queues, single active consumer, and consumer cancellation notifications.
 
 ## Scope

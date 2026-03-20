@@ -162,7 +162,7 @@ function create(options?: RabbitBoxOptions): ApiConnection {
       bindingStore.removeBindingsForQueue(queueName);
       const consumers = consumerRegistry.getConsumersForQueue(queueName);
       for (const consumer of [...consumers]) {
-        consumerRegistry.cancel(consumer.consumerTag);
+        consumerRegistry.serverCancel(consumer.consumerTag);
       }
       messageStores.delete(queueName);
       // Check auto-delete for exchanges that lost bindings
@@ -189,9 +189,10 @@ function create(options?: RabbitBoxOptions): ApiConnection {
       return;
     }
     bindingStore.removeBindingsForQueue(queueName);
+    // Server-cancel all consumers (with notifications)
     const consumers = consumerRegistry.getConsumersForQueue(queueName);
     for (const consumer of [...consumers]) {
-      consumerRegistry.cancel(consumer.consumerTag);
+      consumerRegistry.serverCancel(consumer.consumerTag);
     }
     messageStores.delete(queueName);
     queueExpiry.unregister(queueName);

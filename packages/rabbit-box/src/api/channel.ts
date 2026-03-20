@@ -201,10 +201,10 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
       this.deps.connectionId
     );
     this.deps.bindingStore.removeBindingsForQueue(name);
-    // Cancel all consumers on the deleted queue
+    // Server-cancel all consumers on the deleted queue (with notifications)
     const consumers = this.deps.consumerRegistry.getConsumersForQueue(name);
     for (const consumer of [...consumers]) {
-      this.deps.consumerRegistry.cancel(consumer.consumerTag);
+      this.deps.consumerRegistry.serverCancel(consumer.consumerTag);
     }
     // Clean up message store and expiry timer
     this.deps.removeMessageStore(name);
@@ -382,7 +382,7 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
 
   async consume(
     queue: string,
-    callback: (msg: DeliveredMessage) => void,
+    callback: (msg: DeliveredMessage | null) => void,
     options?: ConsumeOptions
   ): Promise<ConsumeResult> {
     this.assertOpen();
@@ -391,6 +391,12 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     if (queueDef?.singleActiveConsumer) {
       this.deps.consumerRegistry.markSingleActiveConsumer(queue);
     }
+    // Extract consumer priority from x-priority argument
+    const priority =
+      typeof options?.arguments?.['x-priority'] === 'number'
+        ? options.arguments['x-priority']
+        : 0;
+
     const consumerTag = this.deps.consumerRegistry.register(
       queue,
       this.deps.channel.channelNumber,
@@ -399,6 +405,13 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
         consumerTag: options?.consumerTag,
         noAck: options?.noAck,
         exclusive: options?.exclusive,
+        priority,
+        onServerCancel: () => {
+          // amqplib pattern: callback receives null on server-initiated cancel
+          queueMicrotask(() => callback(null));
+          // Emit 'cancel' event on the channel that owns this consumer
+          this.emitCancel(consumerTag);
+        },
       }
     );
     this.deps.queueRegistry.setConsumerCount(
@@ -574,6 +587,11 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
     this.deps.channel.close();
     this.deps.onClose(this.deps.channel.channelNumber);
     this.emit('close');
+  }
+
+  /** Emit a 'cancel' event for a server-cancelled consumer. */
+  emitCancel(consumerTag: string): void {
+    this.emit('cancel', consumerTag);
   }
 
   // ── Internals ───────────────────────────────────────────────────────

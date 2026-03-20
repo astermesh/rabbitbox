@@ -18,7 +18,8 @@ export interface UnackedMessage {
 export interface Consumer {
   readonly consumerTag: string;
   readonly queueName: string;
-  readonly callback: (msg: DeliveredMessage) => void;
+  readonly callback: (msg: DeliveredMessage | null) => void;
   readonly noAck: boolean;
   readonly exclusive: boolean;
+  readonly priority: number;
 }
