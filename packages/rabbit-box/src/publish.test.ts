@@ -1161,5 +1161,50 @@ describe('publish', () => {
       expect(result.routed).toBe(true);
       expect(ctx.getStore('q-alt').count()).toBe(1);
     });
+
+    it('routes through internal alternate exchange (server-side reroute bypasses internal check)', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'internal-ae' },
+      });
+      ctx.exchanges.declareExchange('internal-ae', 'fanout', {
+        internal: true,
+      });
+      ctx.queues.declareQueue('q-internal', {});
+      ctx.bindings.addBinding('internal-ae', 'q-internal', '', {});
+
+      const result = doPublish(ctx, 'primary', 'no-match', body('hello'));
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-internal').count()).toBe(1);
+    });
+
+    it('routes CC/BCC keys through alternate exchange', () => {
+      ctx.exchanges.declareExchange('primary', 'direct', {
+        arguments: { 'alternate-exchange': 'alt' },
+      });
+      ctx.exchanges.declareExchange('alt', 'direct');
+      ctx.queues.declareQueue('q-cc', {});
+      ctx.bindings.addBinding('alt', 'q-cc', 'cc-key', {});
+
+      const result = doPublish(ctx, 'primary', 'no-match', body('hello'), {
+        headers: { CC: ['cc-key'] },
+      });
+
+      expect(result.routed).toBe(true);
+      expect(ctx.getStore('q-cc').count()).toBe(1);
+    });
+
+    it('does not trigger alternate exchange on the default exchange path', () => {
+      // Default exchange uses direct queue lookup by routing key,
+      // not the exchange routing pipeline — AE is not applicable
+      ctx.queues.declareQueue('q-alt', {});
+      ctx.exchanges.declareExchange('alt-fanout', 'fanout');
+      ctx.bindings.addBinding('alt-fanout', 'q-alt', '', {});
+
+      const result = doPublish(ctx, '', 'nonexistent-queue', body('hello'));
+
+      expect(result.routed).toBe(false);
+      expect(ctx.getStore('q-alt').count()).toBe(0);
+    });
   });
 });
