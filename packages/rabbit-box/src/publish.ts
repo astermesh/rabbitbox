@@ -3,6 +3,7 @@ import type { BindingStore } from './binding-store.ts';
 import type { QueueRegistry } from './queue-registry.ts';
 import type { MessageStore } from './message-store.ts';
 import type { MessageProperties, BrokerMessage } from './types/message.ts';
+import type { XDeathEntry } from './types/x-death-entry.ts';
 import type {
   Hook,
   PublishCtx,
@@ -11,6 +12,8 @@ import type {
 import { channelError } from './errors/factories.ts';
 import { route } from './routing.ts';
 import { runHooked } from './hook-runner.ts';
+import { enqueueWithOverflow } from './overflow.ts';
+import { prepareDeadLetter, isDeadLetterCycle } from './dead-letter.ts';
 
 /** AMQP class/method IDs for basic.publish. */
 const BASIC_CLASS_ID = 60;
@@ -19,6 +22,8 @@ const BASIC_PUBLISH_METHOD_ID = 40;
 /** Result of a publish operation. */
 export interface PublishResult {
   readonly routed: boolean;
+  /** True if message was routed but all target queues rejected it (reject-publish). */
+  readonly rejected: boolean;
 }
 
 /** Options for the publish function. */
@@ -136,7 +141,9 @@ export function publish(opts: PublishOptions): PublishResult {
     },
   };
 
-  return runHooked(hook, ctx, () => {
+  let rejected = false;
+
+  const hookedResult = runHooked(hook, ctx, () => {
     // 1. Validate exchange exists
     if (!resolvedExchange && exchangeName !== '') {
       throw channelError.notFound(
@@ -203,9 +210,13 @@ export function publish(opts: PublishOptions): PublishResult {
     // 6. Strip BCC header before enqueue
     const cleanProperties = stripBccHeader(properties);
 
-    // 7. Enqueue message copy to each queue
+    // 7. Enqueue message copy to each queue (with overflow enforcement)
+    let anyEnqueued = false;
+    const enqueuedQueues: string[] = [];
+
     for (const queueName of targetQueues) {
       const store = getMessageStore(queueName);
+      const queue = queueRegistry.getQueue(queueName);
       const message: BrokerMessage = {
         body: new Uint8Array(body),
         properties: { ...cleanProperties },
@@ -216,8 +227,39 @@ export function publish(opts: PublishOptions): PublishResult {
         deliveryCount: 0,
         enqueuedAt: 0, // MessageStore.enqueue() overwrites with its own now()
         priority: cleanProperties.priority ?? 0,
+        xDeath: cleanProperties.headers?.['x-death'] as
+          | XDeathEntry[]
+          | undefined,
       };
-      store.enqueue(message);
+
+      if (!queue) {
+        store.enqueue(message);
+        anyEnqueued = true;
+        enqueuedQueues.push(queueName);
+        continue;
+      }
+
+      const result = enqueueWithOverflow(message, { queue, store });
+
+      if (result.enqueued) {
+        anyEnqueued = true;
+        enqueuedQueues.push(queueName);
+      } else {
+        // reject-publish or reject-publish-dlx
+        if (
+          queue.overflowBehavior === 'reject-publish-dlx' &&
+          queue.deadLetterExchange
+        ) {
+          deadLetterPublish(message, queue, opts);
+        }
+      }
+
+      // Dead-letter dropped messages (drop-head with DLX)
+      for (const dropped of result.dropped) {
+        if (queue.deadLetterExchange) {
+          deadLetterPublish(dropped, queue, opts);
+        }
+      }
     }
 
     const routed = targetQueues.size > 0;
@@ -235,11 +277,63 @@ export function publish(opts: PublishOptions): PublishResult {
     }
 
     // 9. Trigger consumer dispatch for each affected queue
-    for (const queueName of targetQueues) {
+    for (const queueName of enqueuedQueues) {
       onDispatch(queueName);
     }
 
     // 10. Return result
+    rejected = routed && !anyEnqueued;
     return { routed };
   });
+
+  return { ...hookedResult, rejected };
+}
+
+/**
+ * Dead-letter a message to the queue's DLX exchange.
+ *
+ * Prepares x-death headers and re-publishes through the normal pipeline.
+ * Silently drops if DLX exchange doesn't exist or cycle is detected.
+ */
+function deadLetterPublish(
+  message: BrokerMessage,
+  queue: import('./types/queue.ts').Queue,
+  opts: PublishOptions
+): void {
+  const dlx = queue.deadLetterExchange;
+  if (!dlx) return;
+
+  // Cycle detection: prevent infinite dead-letter loops
+  if (isDeadLetterCycle(message, queue.name)) return;
+
+  const prepared = prepareDeadLetter(message, {
+    queueName: queue.name,
+    reason: 'maxlen',
+    deadLetterRoutingKey: queue.deadLetterRoutingKey,
+    now: Date.now(),
+  });
+
+  // Silently drop if DLX exchange doesn't exist
+  if (dlx !== '' && !opts.exchangeRegistry.getExchange(dlx)) return;
+
+  try {
+    publish({
+      exchange: dlx,
+      routingKey: prepared.routingKey,
+      body: prepared.body,
+      properties: prepared.properties,
+      mandatory: false,
+      immediate: false,
+      exchangeRegistry: opts.exchangeRegistry,
+      bindingStore: opts.bindingStore,
+      queueRegistry: opts.queueRegistry,
+      getMessageStore: opts.getMessageStore,
+      onReturn: () => {
+        // Dead-letter publishes never emit basic.return
+      },
+      onDispatch: opts.onDispatch,
+    });
+  } catch {
+    // Silently drop on any error (e.g. DLX is internal)
+  }
 }

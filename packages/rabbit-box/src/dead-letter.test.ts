@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { deadLetter, deadLetterExpired } from './dead-letter.ts';
+import {
+  deadLetter,
+  deadLetterExpired,
+  prepareDeadLetter,
+  isDeadLetterCycle,
+} from './dead-letter.ts';
 import type { DeadLetterDeps } from './dead-letter.ts';
 import type { BrokerMessage, MessageProperties } from './types/message.ts';
 import type { Queue } from './types/queue.ts';
@@ -32,6 +37,12 @@ function makeMessage(overrides: Partial<BrokerMessage> = {}): BrokerMessage {
     priority: 0,
     ...overrides,
   };
+}
+
+function assertDefined<T>(value: T | null | undefined): T {
+  expect(value).not.toBeNull();
+  expect(value).toBeDefined();
+  return value as T;
 }
 
 describe('dead-letter', () => {
@@ -213,7 +224,9 @@ describe('dead-letter', () => {
     expect(xDeath).toHaveLength(1);
     expect((xDeath[0] as XDeathEntry).count).toBe(3);
     // Time should be updated
-    expect((xDeath[0] as XDeathEntry).time).toBe(Math.floor(Date.now() / 1000));
+    expect((xDeath[0] as XDeathEntry).time).toBe(
+      Math.floor(Date.now() / 1000)
+    );
   });
 
   it('adds new entry for different queue+reason combination', () => {
@@ -560,5 +573,435 @@ describe('deadLetterExpired', () => {
     deadLetterExpired(makeMessage(), 'source-q', deps);
 
     expect(republish).not.toHaveBeenCalled();
+  });
+});
+
+// ── Pure function tests (used by publish/overflow pipeline) ─────────
+
+describe('prepareDeadLetter', () => {
+  it('creates x-death entry with correct fields', () => {
+    const msg = makeMessage({
+      exchange: 'source-exchange',
+      deliveryCount: 2,
+      mandatory: true,
+    });
+    const result = prepareDeadLetter(msg, {
+      queueName: 'my-queue',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const xDeath = assertDefined(result.xDeath);
+    expect(xDeath).toHaveLength(1);
+    expect(xDeath[0]).toEqual({
+      queue: 'my-queue',
+      reason: 'maxlen',
+      count: 1,
+      exchange: 'source-exchange',
+      'routing-keys': ['original-rk'],
+      time: 5000,
+    });
+  });
+
+  it('sets x-death in message headers', () => {
+    const msg = makeMessage();
+    const result = prepareDeadLetter(msg, {
+      queueName: 'my-queue',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const headers = assertDefined(result.properties.headers);
+    expect(headers['x-death']).toEqual(result.xDeath);
+  });
+
+  it('sets x-first-death-* headers on first death', () => {
+    const msg = makeMessage();
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const headers = assertDefined(result.properties.headers);
+    expect(headers['x-first-death-queue']).toBe('q1');
+    expect(headers['x-first-death-reason']).toBe('maxlen');
+  });
+
+  it('sets x-last-death-* headers', () => {
+    const msg = makeMessage();
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const headers = assertDefined(result.properties.headers);
+    expect(headers['x-last-death-queue']).toBe('q1');
+    expect(headers['x-last-death-reason']).toBe('maxlen');
+  });
+
+  it('preserves x-first-death-* on subsequent deaths', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex1',
+          'routing-keys': ['rk1'],
+          time: 1000,
+        },
+      ],
+      properties: {
+        headers: {
+          'x-first-death-queue': 'q1',
+          'x-first-death-reason': 'expired',
+        },
+      },
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q2',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const headers = assertDefined(result.properties.headers);
+    expect(headers['x-first-death-queue']).toBe('q1');
+    expect(headers['x-first-death-reason']).toBe('expired');
+    expect(headers['x-last-death-queue']).toBe('q2');
+    expect(headers['x-last-death-reason']).toBe('maxlen');
+  });
+
+  it('increments count for same queue+reason', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'maxlen',
+          count: 2,
+          exchange: 'source-exchange',
+          'routing-keys': ['original-rk'],
+          time: 1000,
+        },
+      ],
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const xDeath = assertDefined(result.xDeath);
+    expect(xDeath).toHaveLength(1);
+    const entry = assertDefined(xDeath[0]);
+    expect(entry.count).toBe(3);
+    expect(entry.time).toBe(5000);
+  });
+
+  it('adds new entry for different queue', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'maxlen',
+          count: 1,
+          exchange: 'ex1',
+          'routing-keys': ['rk1'],
+          time: 1000,
+        },
+      ],
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q2',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const xDeath = assertDefined(result.xDeath);
+    expect(xDeath).toHaveLength(2);
+    expect(assertDefined(xDeath[0]).queue).toBe('q2');
+    expect(assertDefined(xDeath[1]).queue).toBe('q1');
+  });
+
+  it('adds new entry for different reason on same queue', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex1',
+          'routing-keys': ['rk1'],
+          time: 1000,
+        },
+      ],
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const xDeath = assertDefined(result.xDeath);
+    expect(xDeath).toHaveLength(2);
+    expect(assertDefined(xDeath[0]).reason).toBe('maxlen');
+    expect(assertDefined(xDeath[1]).reason).toBe('expired');
+  });
+
+  it('removes expiration property from message', () => {
+    const msg = makeMessage({
+      properties: { expiration: '60000', contentType: 'text/plain' },
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    expect(result.properties.expiration).toBeUndefined();
+    expect(result.properties.contentType).toBe('text/plain');
+  });
+
+  it('stores original-expiration in x-death entry', () => {
+    const msg = makeMessage({
+      properties: { expiration: '60000' },
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const entry = assertDefined(assertDefined(result.xDeath)[0]);
+    expect(entry['original-expiration']).toBe('60000');
+  });
+
+  it('does not set original-expiration when no expiration', () => {
+    const msg = makeMessage();
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const entry = assertDefined(assertDefined(result.xDeath)[0]);
+    expect(entry['original-expiration']).toBeUndefined();
+  });
+
+  it('uses deadLetterRoutingKey when provided', () => {
+    const msg = makeMessage({ routingKey: 'original-rk' });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      deadLetterRoutingKey: 'dl-routing-key',
+      now: 5000,
+    });
+
+    expect(result.routingKey).toBe('dl-routing-key');
+  });
+
+  it('uses original routing key when no deadLetterRoutingKey', () => {
+    const msg = makeMessage({ routingKey: 'original-rk' });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    expect(result.routingKey).toBe('original-rk');
+  });
+
+  it('resets deliveryCount to 0', () => {
+    const msg = makeMessage({ deliveryCount: 5 });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    expect(result.deliveryCount).toBe(0);
+  });
+
+  it('sets mandatory to false', () => {
+    const msg = makeMessage({ mandatory: true });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    expect(result.mandatory).toBe(false);
+  });
+
+  it('preserves existing message headers', () => {
+    const msg = makeMessage({
+      properties: { headers: { 'x-custom': 'value', 'x-other': 42 } },
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const headers = assertDefined(result.properties.headers);
+    expect(headers['x-custom']).toBe('value');
+    expect(headers['x-other']).toBe(42);
+  });
+
+  it('moves incremented entry to front of x-death array', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q2',
+          reason: 'expired',
+          count: 1,
+          exchange: 'ex',
+          'routing-keys': ['rk'],
+          time: 2000,
+        },
+        {
+          queue: 'q1',
+          reason: 'maxlen',
+          count: 1,
+          exchange: 'ex',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+
+    const result = prepareDeadLetter(msg, {
+      queueName: 'q1',
+      reason: 'maxlen',
+      now: 5000,
+    });
+
+    const xDeath = assertDefined(result.xDeath);
+    expect(xDeath).toHaveLength(2);
+    const first = assertDefined(xDeath[0]);
+    expect(first.queue).toBe('q1');
+    expect(first.reason).toBe('maxlen');
+    expect(first.count).toBe(2);
+    expect(assertDefined(xDeath[1]).queue).toBe('q2');
+  });
+});
+
+describe('isDeadLetterCycle', () => {
+  it('returns false when no xDeath', () => {
+    const msg = makeMessage();
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(false);
+  });
+
+  it('returns false when xDeath is empty', () => {
+    const msg = makeMessage({ xDeath: [] });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(false);
+  });
+
+  it('returns false when source queue not in xDeath', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'other-queue',
+          reason: 'maxlen',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(false);
+  });
+
+  it('returns true when source queue in xDeath with automatic reason', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'maxlen',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(true);
+  });
+
+  it('returns false when any reason is rejected', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'maxlen',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+        {
+          queue: 'q2',
+          reason: 'rejected',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 2000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(false);
+  });
+
+  it('detects cycle with expired reason', () => {
+    const msg = makeMessage({
+      xDeath: [
+        {
+          queue: 'q1',
+          reason: 'expired',
+          count: 1,
+          exchange: '',
+          'routing-keys': ['rk'],
+          time: 1000,
+        },
+      ],
+    });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(true);
+  });
+
+  it('detects cycle with mixed automatic reasons', () => {
+    const xDeath: XDeathEntry[] = [
+      {
+        queue: 'q1',
+        reason: 'maxlen',
+        count: 1,
+        exchange: '',
+        'routing-keys': ['rk'],
+        time: 1000,
+      },
+      {
+        queue: 'q2',
+        reason: 'expired',
+        count: 1,
+        exchange: '',
+        'routing-keys': ['rk'],
+        time: 2000,
+      },
+    ];
+    const msg = makeMessage({ xDeath });
+    expect(isDeadLetterCycle(msg, 'q1')).toBe(true);
   });
 });
