@@ -1,5 +1,7 @@
 # T02: Priority Queues
 
+**Status:** done
+
 Implement priority queue support.
 
 ## Scope

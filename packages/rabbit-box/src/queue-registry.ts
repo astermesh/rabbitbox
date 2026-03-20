@@ -72,6 +72,15 @@ function defaultGenerateName(): string {
   return `amq.gen-${globalThis.crypto.randomUUID()}`;
 }
 
+/**
+ * Clamp x-max-priority: RabbitMQ clamps 0 → 1 at runtime.
+ * Values 1-255 are used as-is. undefined stays undefined.
+ */
+function clampMaxPriority(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  return Math.max(1, value);
+}
+
 function buildQueue(name: string, opts: DeclareQueueOptions): Queue {
   const args = opts.arguments ?? {};
   return {
@@ -89,7 +98,7 @@ function buildQueue(name: string, opts: DeclareQueueOptions): Queue {
     deadLetterRoutingKey: args['x-dead-letter-routing-key'] as
       | string
       | undefined,
-    maxPriority: args['x-max-priority'] as number | undefined,
+    maxPriority: clampMaxPriority(args['x-max-priority'] as number | undefined),
     singleActiveConsumer: args['x-single-active-consumer'] as
       | boolean
       | undefined,
@@ -414,5 +423,28 @@ export class QueueRegistry {
     if (entry) {
       entry.consumerCount = count;
     }
+  }
+}
+
+/**
+ * Validate x-max-priority queue argument.
+ *
+ * RabbitMQ requires a non-negative integer in range 0-255.
+ * Throws PRECONDITION_FAILED (406) on invalid values.
+ */
+export function validateMaxPriority(value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw channelError.preconditionFailed(
+      `invalid arg 'x-max-priority' for queue in vhost '/': ${JSON.stringify(value)} is not a valid value`,
+      QUEUE_CLASS,
+      QUEUE_DECLARE
+    );
+  }
+  if (value > 255) {
+    throw channelError.preconditionFailed(
+      `invalid arg 'x-max-priority' for queue in vhost '/': {max_value_exceeded,${value}}`,
+      QUEUE_CLASS,
+      QUEUE_DECLARE
+    );
   }
 }

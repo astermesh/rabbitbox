@@ -2,7 +2,7 @@ import type { ExchangeRegistry } from '../exchange-registry.ts';
 import type { QueueRegistry } from '../queue-registry.ts';
 import type { BindingStore } from '../binding-store.ts';
 import type { ConsumerRegistry } from '../consumer-registry.ts';
-import type { MessageStore } from '../message-store.ts';
+import type { IMessageStore } from '../message-store.ts';
 import type { Dispatcher } from '../dispatcher.ts';
 import type { QueueExpiry } from '../queue-expiry.ts';
 import { Channel } from '../channel.ts';
@@ -21,9 +21,9 @@ export interface BrokerState {
   readonly bindingStore: BindingStore;
   readonly consumerRegistry: ConsumerRegistry;
   readonly dispatcher: Dispatcher;
-  readonly messageStores: Map<string, MessageStore>;
+  readonly messageStores: Map<string, IMessageStore>;
   /** Lazy-create and return the message store for a queue. */
-  readonly getMessageStore: (queueName: string) => MessageStore;
+  readonly getMessageStore: (queueName: string) => IMessageStore;
   /** Queue expiry manager (x-expires). */
   readonly queueExpiry: QueueExpiry;
   /** Called when a message expires (TTL). Used for dead-lettering. */
@@ -158,7 +158,7 @@ export class ApiConnection extends EventEmitter<ConnectionEvents> {
     this.emit('close');
   }
 
-  getMessageStore(queueName: string): MessageStore {
+  getMessageStore(queueName: string): IMessageStore {
     return this.state.getMessageStore(queueName);
   }
 

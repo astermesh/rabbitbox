@@ -1,6 +1,6 @@
 import type { ConsumerRegistry, ConsumerEntry } from './consumer-registry.ts';
 import type { Channel } from './channel.ts';
-import type { MessageStore } from './message-store.ts';
+import type { IMessageStore } from './message-store.ts';
 import type { DeliveredMessage, BrokerMessage } from './types/message.ts';
 
 /**
@@ -51,7 +51,7 @@ export class Dispatcher {
    */
   dispatch(
     queueName: string,
-    store: MessageStore,
+    store: IMessageStore,
     getChannel: (channelNumber: number) => Channel | undefined
   ): void {
     // Drain expired messages from queue head (lazy expiry).

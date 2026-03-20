@@ -1,7 +1,7 @@
 import type { ExchangeRegistry } from './exchange-registry.ts';
 import type { BindingStore } from './binding-store.ts';
 import type { QueueRegistry } from './queue-registry.ts';
-import type { MessageStore } from './message-store.ts';
+import type { IMessageStore } from './message-store.ts';
 import type { MessageProperties, BrokerMessage } from './types/message.ts';
 import type { XDeathEntry } from './types/x-death-entry.ts';
 import type {
@@ -38,7 +38,7 @@ export interface PublishOptions {
   readonly exchangeRegistry: ExchangeRegistry;
   readonly bindingStore: BindingStore;
   readonly queueRegistry: QueueRegistry;
-  readonly getMessageStore: (queue: string) => MessageStore;
+  readonly getMessageStore: (queue: string) => IMessageStore;
 
   /** Callback for basic.return (mandatory unroutable messages). */
   readonly onReturn: (

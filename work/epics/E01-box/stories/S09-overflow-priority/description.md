@@ -1,5 +1,7 @@
 # S09: Queue Overflow & Priority Queues
 
+**Status:** done
+
 Implement queue overflow policies and priority queue support.
 
 ## Scope

@@ -2,7 +2,8 @@ import { ExchangeRegistry } from '../exchange-registry.ts';
 import { QueueRegistry } from '../queue-registry.ts';
 import { BindingStore } from '../binding-store.ts';
 import { ConsumerRegistry } from '../consumer-registry.ts';
-import { MessageStore } from '../message-store.ts';
+import { MessageStore, type IMessageStore } from '../message-store.ts';
+import { PriorityMessageStore } from '../priority-message-store.ts';
 import { Dispatcher } from '../dispatcher.ts';
 import { QueueExpiry } from '../queue-expiry.ts';
 import { deadLetterExpired } from '../dead-letter.ts';
@@ -42,7 +43,7 @@ function create(options?: RabbitBoxOptions): ApiConnection {
     persist: options?.obi?.persist ?? defaults.persist,
   };
 
-  const messageStores = new Map<string, MessageStore>();
+  const messageStores = new Map<string, IMessageStore>();
 
   const exchangeRegistry: ExchangeRegistry = new ExchangeRegistry({
     bindingCount: (name: string): number => bindingStore.bindingCount(name),
@@ -89,14 +90,22 @@ function create(options?: RabbitBoxOptions): ApiConnection {
     queueExists: (name) => queueRegistry.getQueue(name) !== undefined,
   });
 
-  const getMessageStore = (queueName: string): MessageStore => {
+  const getMessageStore = (queueName: string): IMessageStore => {
     let store = messageStores.get(queueName);
     if (!store) {
       const queue = queueRegistry.getQueue(queueName);
-      store = new MessageStore({
-        messageTtl: queue?.messageTtl,
-        now: () => obi.time.now(),
-      });
+      if (queue?.maxPriority !== undefined) {
+        store = new PriorityMessageStore({
+          maxPriority: queue.maxPriority,
+          messageTtl: queue.messageTtl,
+          now: () => obi.time.now(),
+        });
+      } else {
+        store = new MessageStore({
+          messageTtl: queue?.messageTtl,
+          now: () => obi.time.now(),
+        });
+      }
       messageStores.set(queueName, store);
     }
     return store;

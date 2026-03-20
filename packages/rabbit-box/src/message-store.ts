@@ -7,12 +7,30 @@ export interface MessageStoreOptions {
 }
 
 /**
+ * Common contract for message stores (FIFO and priority-aware).
+ *
+ * Both MessageStore (plain FIFO) and PriorityMessageStore implement
+ * this interface so they can be used interchangeably by the dispatcher,
+ * overflow logic, and publish pipeline.
+ */
+export interface IMessageStore {
+  enqueue(message: BrokerMessage): BrokerMessage;
+  dequeue(): BrokerMessage | null;
+  drainExpired(now: number): BrokerMessage[];
+  peek(): BrokerMessage | null;
+  count(): number;
+  byteSize(): number;
+  purge(): number;
+  requeue(message: BrokerMessage, position?: 'head' | number): void;
+}
+
+/**
  * Per-queue FIFO message storage.
  *
  * Maintains strict FIFO ordering and accurate byte-size tracking.
  * Handles TTL computation on enqueue (both per-message and per-queue).
  */
-export class MessageStore {
+export class MessageStore implements IMessageStore {
   private messages: BrokerMessage[] = [];
   private totalByteSize = 0;
   private readonly messageTtl: number | undefined;

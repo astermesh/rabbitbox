@@ -1,5 +1,5 @@
 import type { Queue } from './types/queue.ts';
-import type { MessageStore } from './message-store.ts';
+import type { IMessageStore } from './message-store.ts';
 import type { BrokerMessage } from './types/message.ts';
 
 export interface EnqueueWithOverflowResult {
@@ -11,7 +11,7 @@ export interface EnqueueWithOverflowResult {
 
 export interface OverflowContext {
   readonly queue: Queue;
-  readonly store: MessageStore;
+  readonly store: IMessageStore;
 }
 
 /**
@@ -55,7 +55,7 @@ export function enqueueWithOverflow(
 }
 
 /** Queue is at or above its limit — no room for a new message. */
-function isAtLimit(queue: Queue, store: MessageStore): boolean {
+function isAtLimit(queue: Queue, store: IMessageStore): boolean {
   if (queue.maxLength !== undefined && store.count() >= queue.maxLength)
     return true;
   if (
@@ -67,7 +67,7 @@ function isAtLimit(queue: Queue, store: MessageStore): boolean {
 }
 
 /** Queue has exceeded its limit — needs to drop from head. */
-function isOverLimit(queue: Queue, store: MessageStore): boolean {
+function isOverLimit(queue: Queue, store: IMessageStore): boolean {
   if (queue.maxLength !== undefined && store.count() > queue.maxLength)
     return true;
   if (
