@@ -117,6 +117,7 @@ const baseResolve = {
   alias: {
     '@rabbitbox/sbi': resolve(__dirname, 'packages/rabbit-sbi/src'),
     '@rabbitbox/box': resolve(__dirname, 'packages/rabbit-box/src'),
+    '@rabbitbox/amqplib': resolve(__dirname, 'packages/rabbit-amqplib/src'),
   },
 };
 

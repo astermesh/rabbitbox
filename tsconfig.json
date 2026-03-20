@@ -10,6 +10,7 @@
   "files": [],
   "references": [
     { "path": "packages/rabbit-sbi" },
-    { "path": "packages/rabbit-box" }
+    { "path": "packages/rabbit-box" },
+    { "path": "packages/rabbit-amqplib" }
   ]
 }

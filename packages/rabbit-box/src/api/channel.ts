@@ -10,7 +10,7 @@ import type { DeliveredMessage, MessageProperties } from '../types/message.ts';
 import type { ExchangeType } from '../types/exchange.ts';
 import type { AcknowledgmentDeps } from '../acknowledgment.ts';
 import { publish } from '../publish.ts';
-import { ack, nack, reject } from '../acknowledgment.ts';
+import { ack, nack, reject, ackAll, nackAll } from '../acknowledgment.ts';
 import { deadLetter } from '../dead-letter.ts';
 import { EventEmitter } from './event-emitter.ts';
 import type {
@@ -494,6 +494,16 @@ export class ApiChannel extends EventEmitter<ChannelEvents> {
       requeue ?? true,
       this.ackDeps
     );
+  }
+
+  ackAll(): void {
+    this.assertOpen();
+    ackAll(this.deps.channel, this.ackDeps);
+  }
+
+  nackAll(requeue?: boolean): void {
+    this.assertOpen();
+    nackAll(this.deps.channel, requeue ?? true, this.ackDeps);
   }
 
   // ── Polling ─────────────────────────────────────────────────────────

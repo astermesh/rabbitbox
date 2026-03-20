@@ -1,5 +1,7 @@
 # T01: Connection & Channel Adapter
 
+**Status:** done
+
 Implement the amqplib-compatible connection and channel wrapper.
 
 ## Scope
