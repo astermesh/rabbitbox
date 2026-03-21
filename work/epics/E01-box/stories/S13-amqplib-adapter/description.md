@@ -1,5 +1,7 @@
 # S13: amqplib-Compatible Adapter
 
+**Status:** done
+
 Build a drop-in replacement for amqplib that routes to in-memory RabbitBox instead of TCP. Enables existing codebases to use RabbitBox with zero code changes.
 
 ## Scope

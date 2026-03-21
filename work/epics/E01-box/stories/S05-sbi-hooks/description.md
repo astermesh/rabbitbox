@@ -1,5 +1,7 @@
 # S05: SBI Hook System
 
+**Status:** done
+
 Implement the SimBox Standard (SBS) hook system with all 27 hook points — 21 inbound (IBI) and 6 outbound (OBI).
 
 ## Scope

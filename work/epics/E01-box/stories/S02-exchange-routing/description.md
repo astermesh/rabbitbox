@@ -1,5 +1,7 @@
 # S02: Exchange Routing Engine
 
+**Status:** done
+
 Implement all four AMQP exchange types with exact RabbitMQ routing semantics, the exchange registry, and binding management.
 
 ## Scope

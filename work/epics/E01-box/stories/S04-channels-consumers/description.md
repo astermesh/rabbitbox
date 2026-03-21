@@ -1,5 +1,7 @@
 # S04: Channels, Consumers & Acknowledgments
 
+**Status:** done
+
 Implement the connection/channel lifecycle, consumer management with round-robin dispatch, acknowledgment tracking, and polling operations.
 
 ## Scope
