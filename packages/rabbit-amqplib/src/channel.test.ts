@@ -910,6 +910,23 @@ describe('AmqplibChannel', () => {
       await ch.close();
       await expect(ch.recover()).rejects.toThrow();
     });
+
+    it('throws on cancel after close', async () => {
+      await ch.close();
+      await expect(ch.cancel('tag')).rejects.toThrow();
+    });
+
+    it('throws on waitForConfirms after close', async () => {
+      await ch.close();
+      await expect(ch.waitForConfirms()).rejects.toThrow('Channel closed');
+    });
+
+    it('throws on sendToQueue after close', async () => {
+      await ch.close();
+      expect(() => ch.sendToQueue('q', Buffer.from('x'))).toThrow(
+        'Channel closed'
+      );
+    });
   });
 });
 
@@ -934,5 +951,131 @@ describe('ConfirmChannel', () => {
     ch.inner.on('ack', (e) => acks.push(e.deliveryTag));
     ch.sendToQueue('confirm-q', Buffer.from('confirmed'));
     expect(acks).toHaveLength(1);
+  });
+
+  // ── publish with callback ───────────────────────────────────────────
+
+  it('publish calls callback with (null, ok) on successful ack', async () => {
+    await ch.assertQueue('cb-q');
+    const result = await new Promise<{ err: Error | null; ok: unknown }>(
+      (resolve) => {
+        ch.publish('', 'cb-q', Buffer.from('hello'), undefined, (err, ok) => {
+          resolve({ err, ok });
+        });
+      }
+    );
+    expect(result.err).toBeNull();
+    expect(result.ok).toEqual({});
+  });
+
+  it('sendToQueue calls callback with (null, ok) on successful ack', async () => {
+    await ch.assertQueue('cb-q2');
+    const result = await new Promise<{ err: Error | null; ok: unknown }>(
+      (resolve) => {
+        ch.sendToQueue('cb-q2', Buffer.from('hello'), undefined, (err, ok) => {
+          resolve({ err, ok });
+        });
+      }
+    );
+    expect(result.err).toBeNull();
+    expect(result.ok).toEqual({});
+  });
+
+  it('publish callbacks are called in order for multiple messages', async () => {
+    await ch.assertQueue('order-q');
+    const tags: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      ch.sendToQueue('order-q', Buffer.from(`msg-${i}`), undefined, () => {
+        tags.push(i);
+      });
+    }
+    expect(tags).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('waitForConfirms resolves after all published messages are confirmed', async () => {
+    await ch.assertQueue('wfc-q');
+    ch.sendToQueue('wfc-q', Buffer.from('a'));
+    ch.sendToQueue('wfc-q', Buffer.from('b'));
+    await expect(ch.waitForConfirms()).resolves.toBeUndefined();
+  });
+
+  it('publish works without callback in confirm mode', async () => {
+    await ch.assertQueue('no-cb-q');
+    const result = ch.publish('', 'no-cb-q', Buffer.from('data'));
+    expect(result).toBe(true);
+    await ch.waitForConfirms();
+  });
+
+  it('sendToQueue works without callback in confirm mode', async () => {
+    await ch.assertQueue('no-cb-q2');
+    const result = ch.sendToQueue('no-cb-q2', Buffer.from('data'));
+    expect(result).toBe(true);
+    await ch.waitForConfirms();
+  });
+
+  // ── return event ────────────────────────────────────────────────────
+
+  it('emits return event for mandatory unroutable messages', async () => {
+    await ch.assertExchange('ret-ex', 'direct');
+    const returned: unknown[] = [];
+    ch.on('return', (msg) => {
+      returned.push(msg);
+    });
+    ch.publish('ret-ex', 'no-such-key', Buffer.from('unroutable'), {
+      mandatory: true,
+    });
+    expect(returned).toHaveLength(1);
+    const msg = returned[0] as {
+      fields: { replyCode: number; exchange: string; routingKey: string };
+      content: Buffer;
+    };
+    expect(msg.fields.replyCode).toBe(312);
+    expect(msg.fields.exchange).toBe('ret-ex');
+    expect(msg.fields.routingKey).toBe('no-such-key');
+    expect(msg.content.toString()).toBe('unroutable');
+  });
+
+  it('return event fires BEFORE confirm callback for mandatory unroutable messages', async () => {
+    await ch.assertExchange('order-ex', 'direct');
+    const events: string[] = [];
+    ch.on('return', () => {
+      events.push('return');
+    });
+    ch.publish(
+      'order-ex',
+      'no-route',
+      Buffer.from('test'),
+      { mandatory: true },
+      () => {
+        events.push('callback');
+      }
+    );
+    expect(events).toEqual(['return', 'callback']);
+  });
+
+  // ── drain event ─────────────────────────────────────────────────────
+
+  it('does not emit drain when publish returns true (no backpressure)', async () => {
+    await ch.assertQueue('drain-q');
+    const drains: number[] = [];
+    ch.on('drain', () => {
+      drains.push(drains.length);
+    });
+    const result = ch.sendToQueue('drain-q', Buffer.from('data'));
+    expect(result).toBe(true);
+    expect(drains).toHaveLength(0);
+  });
+
+  // ── callback ignored on regular channel ─────────────────────────────
+
+  it('callback parameter is ignored on regular (non-confirm) channel', async () => {
+    const regularConn = await connect('amqp://localhost');
+    const regularCh = await regularConn.createChannel();
+    await regularCh.assertQueue('reg-q');
+    const cb = vi.fn();
+    regularCh.publish('', 'reg-q', Buffer.from('data'), undefined, cb);
+    expect(cb).not.toHaveBeenCalled();
+    await regularCh.close();
+    await regularConn.close();
   });
 });

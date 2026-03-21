@@ -1,5 +1,5 @@
 export { connect, AmqplibConnection } from './connection.ts';
-export { AmqplibChannel } from './channel.ts';
+export { AmqplibChannel, type ConfirmCallback } from './channel.ts';
 export type {
   ConnectionEvents,
   AmqplibChannelEvents,
