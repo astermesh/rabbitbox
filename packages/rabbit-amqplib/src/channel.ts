@@ -213,9 +213,7 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
         this.confirmCallbacks.set(tag, callback);
       }
     }
-    const result = this.inner.publish(exchange, routingKey, content, options);
-    this.emit('drain');
-    return result;
+    return this.inner.publish(exchange, routingKey, content, options);
   }
 
   sendToQueue(

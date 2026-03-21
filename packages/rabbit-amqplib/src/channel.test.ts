@@ -910,6 +910,23 @@ describe('AmqplibChannel', () => {
       await ch.close();
       await expect(ch.recover()).rejects.toThrow();
     });
+
+    it('throws on cancel after close', async () => {
+      await ch.close();
+      await expect(ch.cancel('tag')).rejects.toThrow();
+    });
+
+    it('throws on waitForConfirms after close', async () => {
+      await ch.close();
+      await expect(ch.waitForConfirms()).rejects.toThrow('Channel closed');
+    });
+
+    it('throws on sendToQueue after close', async () => {
+      await ch.close();
+      expect(() => ch.sendToQueue('q', Buffer.from('x'))).toThrow(
+        'Channel closed'
+      );
+    });
   });
 });
 
@@ -1038,14 +1055,15 @@ describe('ConfirmChannel', () => {
 
   // ── drain event ─────────────────────────────────────────────────────
 
-  it('emits drain event after publish', async () => {
+  it('does not emit drain when publish returns true (no backpressure)', async () => {
     await ch.assertQueue('drain-q');
     const drains: number[] = [];
     ch.on('drain', () => {
       drains.push(drains.length);
     });
-    ch.sendToQueue('drain-q', Buffer.from('data'));
-    expect(drains).toHaveLength(1);
+    const result = ch.sendToQueue('drain-q', Buffer.from('data'));
+    expect(result).toBe(true);
+    expect(drains).toHaveLength(0);
   });
 
   // ── callback ignored on regular channel ─────────────────────────────
