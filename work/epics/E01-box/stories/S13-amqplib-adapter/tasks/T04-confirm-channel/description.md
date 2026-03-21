@@ -1,5 +1,7 @@
 # T04: ConfirmChannel & Events
 
+**Status:** done
+
 Implement amqplib-compatible ConfirmChannel.
 
 ## Scope

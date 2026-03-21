@@ -18,11 +18,23 @@ import type {
  * Adapts RabbitBox's API to match amqplib's method signatures and
  * message format (fields/properties/content structure).
  */
+export type ConfirmCallback = (
+  err: Error | null,
+  ok: Record<string, never>
+) => void;
+
 export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
   /** @internal */
   readonly inner: ApiChannel;
   readonly isConfirmChannel: boolean;
   private closed = false;
+
+  /** Pending confirm callbacks keyed by publisher delivery tag. */
+  private readonly confirmCallbacks = new Map<number, ConfirmCallback>();
+  /** Mirrors inner channel's delivery tag sequence to map callbacks. */
+  private confirmSeq = 0;
+  /** Whether any nack was received since last waitForConfirms drain. */
+  private hasNacked = false;
 
   constructor(inner: ApiChannel, confirmMode: boolean) {
     super();
@@ -49,6 +61,24 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
       };
       this.emitReturn(adapted);
     });
+
+    if (confirmMode) {
+      inner.on('ack', (event) => {
+        const cb = this.confirmCallbacks.get(event.deliveryTag);
+        if (cb) {
+          this.confirmCallbacks.delete(event.deliveryTag);
+          cb(null, {} as Record<string, never>);
+        }
+      });
+      inner.on('nack', (event) => {
+        this.hasNacked = true;
+        const cb = this.confirmCallbacks.get(event.deliveryTag);
+        if (cb) {
+          this.confirmCallbacks.delete(event.deliveryTag);
+          cb(new Error('Message was nacked'), {} as Record<string, never>);
+        }
+      });
+    }
   }
 
   // ── Topology: Exchanges ─────────────────────────────────────────────
@@ -173,10 +203,19 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
       mandatory?: boolean;
       CC?: string | string[];
       BCC?: string | string[];
-    }
+    },
+    callback?: ConfirmCallback
   ): boolean {
     this.assertOpen();
-    return this.inner.publish(exchange, routingKey, content, options);
+    if (this.isConfirmChannel) {
+      const tag = ++this.confirmSeq;
+      if (callback) {
+        this.confirmCallbacks.set(tag, callback);
+      }
+    }
+    const result = this.inner.publish(exchange, routingKey, content, options);
+    this.emit('drain');
+    return result;
   }
 
   sendToQueue(
@@ -186,10 +225,11 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
       mandatory?: boolean;
       CC?: string | string[];
       BCC?: string | string[];
-    }
+    },
+    callback?: ConfirmCallback
   ): boolean {
     this.assertOpen();
-    return this.inner.sendToQueue(queue, content, options);
+    return this.publish('', queue, content, options, callback);
   }
 
   // ── Consuming ───────────────────────────────────────────────────────
@@ -287,6 +327,10 @@ export class AmqplibChannel extends EventEmitter<AmqplibChannelEvents> {
   async waitForConfirms(): Promise<void> {
     this.assertOpen();
     await this.inner.waitForConfirms();
+    if (this.hasNacked) {
+      this.hasNacked = false;
+      throw new Error('Not all messages were acked');
+    }
   }
 
   // ── Close ───────────────────────────────────────────────────────────
